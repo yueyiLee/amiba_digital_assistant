@@ -1,7 +1,7 @@
 {
   "name": "amoeba-operating-assistant",
-  "version": "1.0.0",
-  "description": "阿米巴经营数字助手 - 面向微小企业的阿米巴经营数据记录与分析 Web 应用（含用户管理）",
+  "version": "1.1.0",
+  "description": "阿米巴经营数字助手 - 面向微小企业的阿米巴经营数据记录与分析 Web 应用（PostgreSQL 版）",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -9,9 +9,9 @@
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.8.1",
     "cors": "^2.8.5",
     "express": "^4.21.2",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1"
   }
 }

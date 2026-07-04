@@ -1,7 +1,7 @@
 # 依赖
 node_modules/
 
-# 数据库文件（运行时生成）
+# SQLite 旧文件（已迁移至 PostgreSQL）
 database.sqlite
 database.sqlite-journal
 database.sqlite-wal
@@ -11,6 +11,9 @@ data/
 # 环境变量
 .env
 .env.local
+
+# PostgreSQL 配置（如使用环境变量）
+# 可通过 .env 或环境变量配置连接信息
 
 # 系统文件
 .DS_Store

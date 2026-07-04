@@ -1,7 +1,7 @@
 /**
  * server.js — 阿米巴经营数字助手 Express 主服务
- * 技术栈：Node.js + Express + better-sqlite3（PRD Demo 阶段方案）
- * 新增：JWT 身份认证 + 用户管理
+ * 技术栈：Node.js + Express + PostgreSQL（pg 连接池）
+ * 认证：JWT 身份认证 + 用户管理
  */
 const express = require('express');
 const cors = require('cors');
@@ -48,9 +48,20 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message || '服务器内部错误' });
 });
 
-app.listen(PORT, () => {
-  console.log(`\n  ◎ 阿米巴经营数字助手 已启动`);
-  console.log(`  → 本地访问: http://localhost:${PORT}`);
-  console.log(`  → 默认管理员: admin / admin123`);
-  console.log(`  → 录入员账号: editor / editor123\n`);
-});
+// 启动：先初始化数据库，再监听端口
+async function start() {
+  try {
+    await db.init();
+    app.listen(PORT, () => {
+      console.log(`\n  ◎ 阿米巴经营数字助手 已启动（PostgreSQL）`);
+      console.log(`  → 本地访问: http://localhost:${PORT}`);
+      console.log(`  → 默认管理员: admin / admin123`);
+      console.log(`  → 录入员账号: editor / editor123\n`);
+    });
+  } catch (e) {
+    console.error('[启动失败]', e.message);
+    process.exit(1);
+  }
+}
+
+start();

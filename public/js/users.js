@@ -24,7 +24,7 @@ const Users = (() => {
           <td>${u.username}${isMe ? ' <span class="badge g">我</span>' : ''}</td>
           <td>${u.display_name}</td>
           <td><span class="badge ${rCls}">${rName}</span></td>
-          <td>${u.created_at || '—'}</td>
+          <td>${u.created_at ? u.created_at.replace('T', ' ').substring(0, 16) : '—'}</td>
           <td>
             <button class="btn btn-secondary btn-sm" onclick="Users.openEditModal(${u.id})">编辑</button>
             <button class="btn btn-secondary btn-sm" onclick="Users.openPwdModal(${u.id})">重置密码</button>
