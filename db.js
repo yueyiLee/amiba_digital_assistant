@@ -7,11 +7,14 @@ const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 
 const pool = new Pool({
-  user: process.env.PGUSER || 'amoeba',
-  host: process.env.PGHOST || 'localhost',
-  database: process.env.PGDATABASE || 'amoeba_app',
-  password: process.env.PGPASSWORD || 'amoeba123',
-  port: process.env.PGPORT || 5432,
+  user: process.env.PG_USER || process.env.PGUSER || 'amoeba',
+  host: process.env.PG_HOST || process.env.PGHOST || 'localhost',
+  database: process.env.PG_DATABASE || process.env.PGDATABASE || 'amoeba_app',
+  password: process.env.PG_PASSWORD || process.env.PGPASSWORD || 'amoeba123',
+  port: parseInt(process.env.PG_PORT || process.env.PGPORT || '5432', 10),
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
 });
 
 /** 执行查询，返回 rows 数组 */

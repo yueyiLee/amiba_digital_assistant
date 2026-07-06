@@ -52,9 +52,9 @@ app.use((err, req, res, next) => {
 async function start() {
   try {
     await db.init();
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {
       console.log(`\n  ◎ 阿米巴经营数字助手 已启动（PostgreSQL）`);
-      console.log(`  → 本地访问: http://localhost:${PORT}`);
+      console.log(`  → 监听: http://0.0.0.0:${PORT}`);
       console.log(`  → 默认管理员: admin / admin123`);
       console.log(`  → 录入员账号: editor / editor123\n`);
     });

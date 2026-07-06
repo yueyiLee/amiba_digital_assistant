@@ -1,0 +1,31 @@
+{
+  "envId": "{{envId}}",
+  "framework": {
+    "name": "amoeba-app",
+    "plugins": {
+      "server": {
+        "use": "@cloudbase/framework-plugin-container",
+        "inputs": {
+          "serviceName": "amoeba-app",
+          "servicePath": "/",
+          "localPath": "./",
+          "uploadType": "package",
+          "containerPort": 3000,
+          "dockerfilePath": "./Dockerfile",
+          "mode": "low-cost",
+          "cpu": 0.25,
+          "mem": 0.5,
+          "minNum": 0,
+          "maxNum": 10,
+          "envVariables": {
+            "PG_HOST": "{{envId}}.pg.rdb.cloud.tencent.com",
+            "PG_PORT": "5432",
+            "PG_DATABASE": "amoeba_app",
+            "PG_USER": "amoeba",
+            "PG_PASSWORD": "{{在控制台配置}}"
+          }
+        }
+      }
+    }
+  }
+}
