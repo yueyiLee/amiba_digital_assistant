@@ -103,6 +103,16 @@
         <div class="chart-card"><div class="c-title">支出构成</div><canvas id="chartExpense" height="160"></canvas></div>
         <div class="chart-card"><div class="c-title">收入构成</div><canvas id="chartIncome" height="160"></canvas></div>
       </div>
+
+      <div class="dash-module">
+        <div class="module-head"><span class="module-title">📦 库存总览</span><span class="module-sub">对照库存与经营数据，辅助判断店铺经营状况</span></div>
+        <div class="metric-grid row3">
+          <div class="metric-card primary"><div class="m-name">在库 SKU</div><div class="m-value" id="dashInvCount">0</div></div>
+          <div class="metric-card"><div class="m-name">库存总价值</div><div class="m-value" id="dashInvValue">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">零库存 SKU</div><div class="m-value negative" id="dashInvZero">0</div></div>
+        </div>
+        <div class="table-wrap"><table class="data-table" id="dashInventoryTable"></table></div>
+      </div>
     </section>
 
     <!-- ===== 录入页 ===== -->
@@ -131,14 +141,20 @@
             <select class="form-select" id="entryUnit"></select>
           </div>
           <div class="form-group">
-            <label class="form-label">客户 <span class="opt">(可选，支持搜索)</span></label>
-            <input type="text" class="form-input search-filter" id="entryCustomerSearch" placeholder="输入关键词筛选客户..." style="margin-bottom:4px;">
-            <select class="form-select" id="entryCustomer"><option value="">— 不关联 —</option></select>
+            <label class="form-label">客户 <span class="opt">(可选，搜索选择)</span></label>
+            <div class="combobox" id="entryCustomerCb">
+              <input type="text" class="form-input cb-input" id="entryCustomerInput" placeholder="搜索并选择客户..." autocomplete="off">
+              <div class="cb-panel" id="entryCustomerPanel"></div>
+              <input type="hidden" id="entryCustomerId" value="">
+            </div>
           </div>
           <div class="form-group">
-            <label class="form-label">商品 <span class="opt">(可选，支持搜索)</span></label>
-            <input type="text" class="form-input search-filter" id="entryProductSearch" placeholder="输入关键词筛选商品..." style="margin-bottom:4px;">
-            <select class="form-select" id="entryProduct"><option value="">— 不关联 —</option></select>
+            <label class="form-label">商品 <span class="opt">(可选，搜索选择)</span></label>
+            <div class="combobox" id="entryProductCb">
+              <input type="text" class="form-input cb-input" id="entryProductInput" placeholder="搜索并选择商品..." autocomplete="off">
+              <div class="cb-panel" id="entryProductPanel"></div>
+              <input type="hidden" id="entryProductId" value="">
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">⑤ 日期</label>
@@ -206,7 +222,7 @@
 
       <!-- 库存 -->
       <div class="btab-content" id="btab-inventory">
-        <div class="list-toolbar"><span class="list-title">库存列表</span></div>
+        <div class="list-toolbar"><span class="list-title">库存列表</span><button class="btn btn-primary btn-sm" id="addInventoryBtn" onclick="Business.openInventoryModal()">+ 添加库存</button></div>
         <div class="table-wrap"><table class="data-table" id="inventoryTable"></table></div>
       </div>
     </section>

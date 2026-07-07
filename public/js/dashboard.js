@@ -37,6 +37,7 @@ const Dashboard = (() => {
 
     renderRateInfo();
     renderCharts(unitFilter);
+    renderInventoryOverview();
   }
 
   // 渲染汇率信息栏
@@ -162,6 +163,35 @@ const Dashboard = (() => {
         }
       }
     });
+  }
+
+  // 库存总览：与经营数据并列，辅助经营者对照判断
+  function renderInventoryOverview() {
+    const list = Storage.getInventorySync();
+    document.getElementById('dashInvCount').textContent = list.length;
+    const totalValue = list.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.avg_price) || 0), 0);
+    document.getElementById('dashInvValue').textContent = Calculator.fmtMoney(totalValue);
+    const zero = list.filter(i => !(Number(i.quantity) > 0)).length;
+    document.getElementById('dashInvZero').textContent = zero;
+
+    const tbl = document.getElementById('dashInventoryTable');
+    if (list.length === 0) { tbl.innerHTML = '<tr><td colspan="6" class="empty-state">暂无库存数据</td></tr>'; return; }
+    tbl.innerHTML = `<thead><tr><th>商品名称</th><th>分类</th><th>库存数量</th><th>均价</th><th>库存价值</th><th>最后编辑</th></tr></thead>
+      <tbody>${list.map(i => {
+        const val = (Number(i.quantity) || 0) * (Number(i.avg_price) || 0);
+        const d = i.updated_at ? new Date(i.updated_at) : null;
+        const t = d && !isNaN(d.getTime())
+          ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+          : '—';
+        return `<tr>
+          <td>${i.product_name}</td>
+          <td>${i.category1} / ${i.category2 || '—'}</td>
+          <td>${i.quantity}</td>
+          <td>${Calculator.fmtMoney(i.avg_price)}</td>
+          <td class="${val >= 0 ? 'amt pos' : 'amt neg'}">${Calculator.fmtMoney(val)}</td>
+          <td class="inv-time">${t}</td>
+        </tr>`;
+      }).join('')}</tbody>`;
   }
 
   function bind() {

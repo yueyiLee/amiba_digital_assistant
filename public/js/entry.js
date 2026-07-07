@@ -13,8 +13,6 @@ const Entry = (() => {
   function render() {
     renderTypeOptions();
     renderUnitOptions();
-    renderCustomerOptions();
-    renderProductOptions();
     // 更新金额符号为设置中的货币
     document.querySelector('.amount-wrap .cur').textContent = Calculator.getCurrency();
     // 默认日期为今天
@@ -33,18 +31,42 @@ const Entry = (() => {
     sel.innerHTML = units.map(u => `<option>${u}</option>`).join('');
   }
 
-  function renderCustomerOptions() {
-    const sel = document.getElementById('entryCustomer');
-    const customers = Storage.getCustomerOptions();
-    sel.innerHTML = '<option value="">— 不关联 —</option>' +
-      customers.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
   }
 
-  function renderProductOptions() {
-    const sel = document.getElementById('entryProduct');
-    const products = Storage.getProductOptions();
-    sel.innerHTML = '<option value="">— 不关联 —</option>' +
-      products.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+  // 可搜索下拉（combobox）：外层固定下拉框，输入即模糊匹配，结果在框内展示。
+  // getOptions 返回 [{id, name}]，每次展开时实时读取，保证数据最新。
+  function setupCombobox(inputId, panelId, hiddenId, getOptions) {
+    const input = document.getElementById(inputId);
+    const panel = document.getElementById(panelId);
+    const hidden = document.getElementById(hiddenId);
+    if (!input || !panel || !hidden) return;
+    function render() {
+      const opts = getOptions() || [];
+      const q = (input.value || '').toLowerCase();
+      const filtered = q ? opts.filter(o => (o.name || '').toLowerCase().includes(q)) : opts;
+      const all = [{ id: '', name: '— 不关联 —' }].concat(filtered);
+      panel.innerHTML = all.map(o =>
+        `<div class="cb-option${o.id !== '' && String(o.id) === String(hidden.value) ? ' selected' : ''}" data-id="${o.id}">${escapeHtml(o.name)}</div>`
+      ).join('');
+      panel.querySelectorAll('.cb-option').forEach(el => {
+        el.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          hidden.value = el.dataset.id;
+          input.value = el.dataset.id ? el.textContent : '';
+          panel.classList.remove('open');
+          input.blur();
+        });
+      });
+      panel.classList.add('open');
+    }
+    input.addEventListener('focus', render);
+    input.addEventListener('input', render);
+    input.addEventListener('blur', () => setTimeout(() => panel.classList.remove('open'), 150));
+    hidden.value = '';
   }
 
   function setDirection(dir) {
@@ -66,8 +88,8 @@ const Entry = (() => {
     const type = document.getElementById('entryType').value;
     const amount = parseFloat(document.getElementById('entryAmount').value);
     const unit = document.getElementById('entryUnit').value;
-    const customerId = document.getElementById('entryCustomer').value || null;
-    const productId = document.getElementById('entryProduct').value || null;
+    const customerId = document.getElementById('entryCustomerId').value || null;
+    const productId = document.getElementById('entryProductId').value || null;
     const date = document.getElementById('entryDate').value;
     const note = document.getElementById('entryNote').value;
 
@@ -147,24 +169,9 @@ const Entry = (() => {
     document.getElementById('dirExpense').addEventListener('click', () => setDirection('expense'));
     document.getElementById('dirIncome').addEventListener('click', () => setDirection('income'));
     document.getElementById('entrySubmit').addEventListener('click', submit);
-    // 客户搜索筛选
-    document.getElementById('entryCustomerSearch').addEventListener('input', (e) => {
-      const q = e.target.value.toLowerCase();
-      const sel = document.getElementById('entryCustomer');
-      const customers = Storage.getCustomerOptions();
-      sel.innerHTML = '<option value="">— 不关联 —</option>' +
-        customers.filter(c => c.name.toLowerCase().includes(q))
-          .map(c => `<option value="${c.id}">${c.name}</option>`).join('');
-    });
-    // 商品搜索筛选
-    document.getElementById('entryProductSearch').addEventListener('input', (e) => {
-      const q = e.target.value.toLowerCase();
-      const sel = document.getElementById('entryProduct');
-      const products = Storage.getProductOptions();
-      sel.innerHTML = '<option value="">— 不关联 —</option>' +
-        products.filter(p => p.name.toLowerCase().includes(q))
-          .map(p => `<option value="${p.id}">${p.name}</option>`).join('');
-    });
+    // 客户 / 商品 可搜索下拉（combobox），每次展开实时读取最新数据
+    setupCombobox('entryCustomerInput', 'entryCustomerPanel', 'entryCustomerId', () => Storage.getCustomerOptions());
+    setupCombobox('entryProductInput', 'entryProductPanel', 'entryProductId', () => Storage.getProductOptions());
   }
 
   return { render, renderRecords, bind, del };

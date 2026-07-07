@@ -195,16 +195,27 @@ const Business = (() => {
   // ========== 库存 ==========
   function renderInventory() {
     const list = Storage.getInventorySync();
+    const addBtn = document.getElementById('addInventoryBtn');
+    if (addBtn) addBtn.style.display = Auth.canEdit() ? '' : 'none';
     const tbl = document.getElementById('inventoryTable');
-    if (list.length === 0) { tbl.innerHTML = '<tr><td colspan="5" class="empty-state">暂无库存</td></tr>'; return; }
-    tbl.innerHTML = `<thead><tr><th>商品名称</th><th>分类</th><th>库存数量</th><th>均价</th>${Auth.canEdit() ? '<th>操作</th>' : ''}</tr></thead>
+    if (list.length === 0) { tbl.innerHTML = '<tr><td colspan="6" class="empty-state">暂无库存，点击右上角"添加库存"录入</td></tr>'; return; }
+    tbl.innerHTML = `<thead><tr><th>商品名称</th><th>分类</th><th>库存数量</th><th>均价</th><th>最后编辑时间</th>${Auth.canEdit() ? '<th>操作</th>' : ''}</tr></thead>
       <tbody>${list.map(i => `<tr>
         <td>${i.product_name}</td>
         <td>${i.category1} / ${i.category2 || '—'}</td>
         <td>${i.quantity} ${Auth.canEdit() ? `<button class="btn btn-secondary btn-sm" onclick="Business.editInventory(${i.id}, ${i.quantity}, ${i.avg_price})">调整</button>` : ''}</td>
         <td>${Calculator.fmtMoney(i.avg_price)}</td>
-        ${Auth.canEdit() ? '<td></td>' : ''}
+        <td class="inv-time">${formatTime(i.updated_at)}</td>
+        ${Auth.canEdit() ? `<td><button class="btn btn-danger btn-sm" onclick="Business.delInventory(${i.id})">删</button></td>` : ''}
       </tr>`).join('')}</tbody>`;
+  }
+
+  function formatTime(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return '—';
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
   }
 
   function editInventory(id, qty, avgPrice) {
@@ -222,6 +233,37 @@ const Business = (() => {
     });
   }
 
+  function openInventoryModal() {
+    const products = Storage.getProductsSync();
+    if (products.length === 0) { App.toast('请先在"商品"页添加商品，再录入库存', 'warning'); return; }
+    const opts = products.map(p => `<option value="${p.id}">${p.name}${p.category1 ? '（' + p.category1 + '）' : ''}</option>`).join('');
+    const body = `
+      <div class="form-group"><label class="form-label">选择商品 <span class="req">*</span></label><select class="form-select" id="m-inv-product">${opts}</select></div>
+      <div class="form-group"><label class="form-label">库存数量 <span class="req">*</span></label><input type="number" class="form-input" id="m-inv-qty" min="0" step="0.01" value="0"></div>
+      <div class="form-group"><label class="form-label">均价</label><input type="number" class="form-input" id="m-inv-price" min="0" step="0.01" value="0"></div>`;
+    App.openModal('添加库存', body, async () => {
+      const product_id = Number(document.getElementById('m-inv-product').value);
+      const quantity = parseFloat(document.getElementById('m-inv-qty').value);
+      if (!product_id) return App.toast('请选择商品', 'error');
+      if (quantity == null || quantity < 0) return App.toast('数量必须 ≥ 0', 'error');
+      await API.post('/inventory', { product_id, quantity, avg_price: parseFloat(document.getElementById('m-inv-price').value) || 0 });
+      await Storage.refreshCache();
+      renderInventory();
+      App.closeModal();
+      App.toast('库存已保存', 'success');
+    });
+  }
+
+  async function delInventory(id) {
+    if (!confirm('确认删除该库存记录？')) return;
+    try {
+      await API.del('/inventory/' + id);
+      await Storage.refreshCache();
+      renderInventory();
+      App.toast('已删除', 'success');
+    } catch (e) { App.toast(e.message, 'error'); }
+  }
+
   function bind() {
     document.querySelectorAll('.tab-item[data-btab]').forEach(tab => {
       tab.addEventListener('click', () => {
@@ -234,5 +276,5 @@ const Business = (() => {
   }
 
   return { render, bind, openContractModal, delContract, openCustomerModal, delCustomer,
-           openProductModal, onCat1Change, delProduct, editInventory };
+           openProductModal, onCat1Change, delProduct, editInventory, openInventoryModal, delInventory };
 })();

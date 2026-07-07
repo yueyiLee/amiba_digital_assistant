@@ -183,7 +183,9 @@ const INIT_TABLES_SQL = `
     product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
     quantity REAL DEFAULT 0,
     avg_price REAL DEFAULT 0,
-    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE
+    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
   );
 
   CREATE TABLE IF NOT EXISTS contracts (
@@ -270,6 +272,30 @@ async function ensureOwnerColumns() {
   }
 }
 
+// inventory 旧库补齐 created_at / updated_at 时间戳列（供"最后编辑时间"展示）
+async function ensureInventoryColumns() {
+  for (const col of ['created_at', 'updated_at']) {
+    try {
+      await query(`ALTER TABLE inventory ADD COLUMN ${col} TIMESTAMPTZ DEFAULT NOW()`);
+    } catch (e) {
+      if (!/already exists/i.test(e.message || '')) throw e;
+    }
+  }
+}
+
+// 确保每一个账号都拥有服装行业默认分类（无分类的账号无法录入商品）
+async function ensureDefaultCategoriesForAll() {
+  const users = await queryAll('SELECT id FROM users');
+  for (const u of users) {
+    const chk = await queryOne('SELECT COUNT(*) AS c FROM categories WHERE owner_id=$1', [u.id]);
+    if (!chk || parseInt(chk.c, 10) === 0) {
+      for (const [l1, l2] of DEFAULT_CATEGORIES) {
+        await query('INSERT INTO categories(owner_id,level1,level2) VALUES($1,$2,$3)', [u.id, l1, l2]);
+      }
+    }
+  }
+}
+
 // settings 旧库主键为 key，改为复合主键 (owner_id, key)
 async function fixSettingsPkey() {
   try { await query('ALTER TABLE settings DROP CONSTRAINT settings_pkey'); }
@@ -315,9 +341,8 @@ async function seedForUser(uid, mode) {
   for (const [k, v] of settingsRows) {
     await query('INSERT INTO settings(owner_id,key,value) VALUES($1,$2,$3)', [uid, k, v]);
   }
-  // 商品分类预设
-  const cats = [['上衣', '短袖'], ['上衣', '长袖'], ['上衣', '卫衣'], ['裤子', '牛仔裤'], ['裤子', '休闲裤'], ['外套', '风衣'], ['外套', '棉服'], ['配饰', '皮带'], ['配饰', '帽子']];
-  for (const [l1, l2] of cats) {
+  // 商品分类预设（服装行业常用，所有账号默认拥有，便于直接录入商品）
+  for (const [l1, l2] of DEFAULT_CATEGORIES) {
     await query('INSERT INTO categories(owner_id,level1,level2) VALUES($1,$2,$3)', [uid, l1, l2]);
   }
 
@@ -406,8 +431,14 @@ async function init() {
   // 2) 旧库兼容：补齐 owner_id 列
   await ensureOwnerColumns();
 
+  // 2.5) inventory 补齐 created_at / updated_at 时间戳列
+  await ensureInventoryColumns();
+
   // 3) 旧库数据迁移（幂等）：无主共享数据分配给 admin，editor 重新生成等价数据
   await migrateLegacyData();
+
+  // 3.5) 确保每个账号都拥有服装行业默认分类（无分类账号无法录入商品）
+  await ensureDefaultCategoriesForAll();
 
   // 4) 首次启动：无用户则创建 admin/editor 并各自生成完整示例
   const r = await query('SELECT COUNT(*) AS c FROM users');
