@@ -34,9 +34,10 @@ router.post('/', async (req, res) => {
     if (exists) return res.status(400).json({ error: '用户名已存在' });
 
     const hash = bcrypt.hashSync(password, 10);
-    const result = await db.query(
+    const result = await db.insertReturning(
       'INSERT INTO users(username, password_hash, display_name, role) VALUES($1,$2,$3,$4) RETURNING id',
-      [username, hash, display_name || username, role || 'viewer']
+      [username, hash, display_name || username, role || 'viewer'],
+      'users'
     );
     res.json({
       id: result.rows[0].id, username, display_name: display_name || username, role: role || 'viewer'

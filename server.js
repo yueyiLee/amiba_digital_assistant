@@ -25,7 +25,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // 健康检查（无需认证，需在业务路由前注册）
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', time: new Date().toISOString() });
+  const s = (db.getStatus ? db.getStatus() : { ready: false, error: null });
+  res.json({
+    status: s.ready ? 'ok' : (s.error ? 'degraded' : 'starting'),
+    time: new Date().toISOString(),
+    db: s
+  });
 });
 
 // API 路由
@@ -48,20 +53,16 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message || '服务器内部错误' });
 });
 
-// 启动：先初始化数据库，再监听端口
-async function start() {
-  try {
-    await db.init();
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`\n  ◎ 阿米巴经营数字助手 已启动（PostgreSQL）`);
-      console.log(`  → 监听: http://0.0.0.0:${PORT}`);
-      console.log(`  → 默认管理员: admin / admin123`);
-      console.log(`  → 录入员账号: editor / editor123\n`);
-    });
-  } catch (e) {
-    console.error('[启动失败]', e.message);
-    process.exit(1);
-  }
+// 启动：先监听端口（保证 SCF HTTP 探测不会因 9000 无监听而返回 443），再后台初始化数据库
+function start() {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n  ◎ 阿米巴经营数字助手 已启动（PostgreSQL）`);
+    console.log(`  → 监听: http://0.0.0.0:${PORT}`);
+    console.log(`  → 默认管理员: admin / admin123`);
+    console.log(`  → 录入员账号: editor / editor123\n`);
+  });
+  // 后台初始化；失败时仅记录，不退出进程（避免端口 9000 无监听导致 443）
+  db.init().catch((e) => console.error('[启动] db.init 异常:', e.message));
 }
 
 start();

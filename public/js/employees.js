@@ -20,9 +20,16 @@ const Employees = (() => {
   function generateMonthOptions() {
     const arr = [];
     const now = new Date();
-    for (let i = 0; i < 12; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      arr.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    const endYear = now.getFullYear();
+    const endMonth = now.getMonth() + 1; // 1-12
+    // 查询月份范围固定从 2025 年 1 月开始，直到当前月份
+    const startYear = 2025;
+    const startMonth = 1;
+    let y = startYear, m = startMonth;
+    while (y < endYear || (y === endYear && m <= endMonth)) {
+      arr.push(`${y}-${String(m).padStart(2, '0')}`);
+      m++;
+      if (m > 12) { m = 1; y++; }
     }
     return arr;
   }

@@ -2,8 +2,8 @@ FROM node:20-alpine
 WORKDIR /app
 
 # 安装依赖（利用 Docker 缓存层）
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+COPY package.json ./
+RUN npm install --omit=dev
 
 # 复制源代码
 COPY . .

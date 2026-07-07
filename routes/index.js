@@ -34,7 +34,7 @@ router.post('/transactions', async (req, res) => {
   try {
     const { amount, type, unit, date, customer_id, product_id, note } = req.body || {};
     if (amount == null || !type || !date) return fail400(res, '缺少必要字段（金额/类型/日期）');
-    const result = await db.query(
+    const result = await db.insertReturning(
       'INSERT INTO transactions(amount,type,unit,customer_id,product_id,date,note) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',
       [amount, type, unit || '全公司', customer_id || null, product_id || null, date, note || '']
     );
@@ -60,7 +60,7 @@ router.post('/products', async (req, res) => {
   try {
     const { name, brand, unit, category1, category2, purchase_price, sale_price } = req.body || {};
     if (!name || !category1) return fail400(res, '缺少必要字段（名称/一级分类）');
-    const result = await db.query(
+    const result = await db.insertReturning(
       'INSERT INTO products(name,brand,unit,category1,category2,purchase_price,sale_price) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',
       [name, brand || '', unit || '件', category1, category2 || '', purchase_price || 0, sale_price || 0]
     );
@@ -103,7 +103,7 @@ router.post('/customers', async (req, res) => {
     const { name, type, contact, address } = req.body || {};
     if (!name) return fail400(res, '客户名称必填');
     if (!type) return fail400(res, '客户类型必选');
-    const result = await db.query(
+    const result = await db.insertReturning(
       'INSERT INTO customers(name,type,contact,address) VALUES($1,$2,$3,$4) RETURNING id',
       [name, type, contact || '', address || '']
     );
@@ -198,7 +198,7 @@ router.post('/employees', async (req, res) => {
     const { name, position, hourly_rate, join_date } = req.body || {};
     if (!name) return fail400(res, '姓名必填');
     if (hourly_rate == null || hourly_rate <= 0) return fail400(res, '时薪必须大于 0');
-    const result = await db.query(
+    const result = await db.insertReturning(
       'INSERT INTO employees(name,position,hourly_rate,join_date) VALUES($1,$2,$3,$4) RETURNING id',
       [name, position || '', hourly_rate, join_date || '']
     );
@@ -238,7 +238,7 @@ router.post('/contracts', async (req, res) => {
   try {
     const { contract_no, customer_id, amount, status, start_date, end_date, note } = req.body || {};
     if (!contract_no || !customer_id || amount == null) return fail400(res, '请填写必填项（合同号/客户/金额）');
-    const result = await db.query(
+    const result = await db.insertReturning(
       'INSERT INTO contracts(contract_no,customer_id,amount,status,start_date,end_date,note) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',
       [contract_no, customer_id, amount, status || '进行中', start_date || '', end_date || '', note || '']
     );
@@ -305,7 +305,7 @@ router.get('/salaries', async (req, res) => {
 router.post('/salaries', async (req, res) => {
   try {
     const { employee_id, amount, month } = req.body || {};
-    const result = await db.query(
+    const result = await db.insertReturning(
       'INSERT INTO salaries(employee_id,amount,month) VALUES($1,$2,$3) RETURNING id',
       [employee_id, amount || 0, month || '']
     );
