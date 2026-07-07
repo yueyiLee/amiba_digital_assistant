@@ -39,8 +39,12 @@ router.post('/', async (req, res) => {
       [username, hash, display_name || username, role || 'viewer'],
       'users'
     );
+    const newId = result.rows[0].id;
+    // 新账号初始化少量示例数据（核心表各 2-3 条），失败不影响账号创建
+    try { await db.seedForUser(newId, 'sample'); }
+    catch (seedErr) { console.error('[用户] 示例数据初始化失败:', seedErr.message); }
     res.json({
-      id: result.rows[0].id, username, display_name: display_name || username, role: role || 'viewer'
+      id: newId, username, display_name: display_name || username, role: role || 'viewer'
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
