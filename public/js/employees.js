@@ -6,32 +6,31 @@ const Employees = (() => {
   let selectedMonth = '';
 
   function render() {
-    renderMonthSelector();
+    renderYearMonthSelectors();
     renderTable();
   }
 
-  function renderMonthSelector() {
-    const sel = document.getElementById('empMonth');
-    const months = generateMonthOptions();
-    if (!selectedMonth) selectedMonth = Calculator.currentMonth();
-    sel.innerHTML = months.map(m => `<option value="${m}" ${m === selectedMonth ? 'selected' : ''}>${m.slice(0, 4)}年${m.slice(5)}月</option>`).join('');
-  }
-
-  function generateMonthOptions() {
-    const arr = [];
+  // 年份、月份独立下拉：年份 2020~今年，月份 1~12
+  function renderYearMonthSelectors() {
     const now = new Date();
-    const endYear = now.getFullYear();
-    const endMonth = now.getMonth() + 1; // 1-12
-    // 查询月份范围固定从 2025 年 1 月开始，直到当前月份
-    const startYear = 2025;
-    const startMonth = 1;
-    let y = startYear, m = startMonth;
-    while (y < endYear || (y === endYear && m <= endMonth)) {
-      arr.push(`${y}-${String(m).padStart(2, '0')}`);
-      m++;
-      if (m > 12) { m = 1; y++; }
-    }
-    return arr;
+    const curYear = now.getFullYear();
+    if (!selectedMonth) selectedMonth = Calculator.currentMonth(); // 形如 'YYYY-MM'
+    const [defYear, defMonth] = selectedMonth.split('-');
+
+    // 年份：2020 ~ 今年（降序，今年在顶部）
+    const yearSel = document.getElementById('empYear');
+    const years = [];
+    for (let y = curYear; y >= 2020; y--) years.push(y);
+    yearSel.innerHTML = years.map(yr =>
+      `<option value="${yr}" ${String(yr) === defYear ? 'selected' : ''}>${yr}年</option>`
+    ).join('');
+
+    // 月份：1~12
+    const monthSel = document.getElementById('empMonth');
+    monthSel.innerHTML = Array.from({ length: 12 }, (_, i) => {
+      const mm = String(i + 1).padStart(2, '0');
+      return `<option value="${mm}" ${mm === defMonth ? 'selected' : ''}>${i + 1}月</option>`;
+    }).join('');
   }
 
   function renderTable() {
@@ -180,10 +179,14 @@ const Employees = (() => {
   }
 
   function bind() {
-    document.getElementById('empMonth').addEventListener('change', (e) => {
-      selectedMonth = e.target.value;
+    const sync = () => {
+      const y = document.getElementById('empYear').value;
+      const m = document.getElementById('empMonth').value;
+      selectedMonth = `${y}-${m}`;
       renderTable();
-    });
+    };
+    document.getElementById('empYear').addEventListener('change', sync);
+    document.getElementById('empMonth').addEventListener('change', sync);
   }
 
   return { render, bind, openModal, openEditModal, del };
