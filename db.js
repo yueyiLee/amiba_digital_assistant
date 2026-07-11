@@ -23,6 +23,16 @@ let dbError = null;
 function setDbStatus(ready, error) { dbReady = ready; dbError = error || null; }
 function getStatus() { return { ready: dbReady, error: dbError }; }
 
+// 服装行业默认商品分类（系统预设，所有账号同步拥有，便于直接录入商品）
+const DEFAULT_CATEGORIES = [
+  ['上衣', '短袖'], ['上衣', '长袖'], ['上衣', '卫衣'], ['上衣', '衬衫'],
+  ['裤子', '牛仔裤'], ['裤子', '休闲裤'], ['裤子', '西裤'],
+  ['外套', '风衣'], ['外套', '棉服'], ['外套', '羽绒服'],
+  ['裙装', '连衣裙'], ['裙装', '半身裙'],
+  ['针织', '毛衣'], ['针织', '针织衫'],
+  ['配饰', '皮带'], ['配饰', '帽子'], ['配饰', '围巾'], ['配饰', '袜子']
+];
+
 // 云端 SDK 客户端延迟创建（不在模块加载时缓存）：
 // CloudBase 注入的临时凭证 (TENCENTCLOUD_SESSIONTOKEN) 会周期性过期，
 // 若缓存在进程生命周期内，一段时间后 executePGSql 会报 "SecretId is not found"。
@@ -283,16 +293,23 @@ async function ensureInventoryColumns() {
   }
 }
 
-// 确保每一个账号都拥有服装行业默认分类（无分类的账号无法录入商品）
+// 确保每一个账号都拥有完整的服装行业默认分类（逐条补全，不删除用户自定义分类）
+// 修复：之前是"零分类才全量补"，导致创建时 seed 失败或部分缺失的账号（如 caoyanyan）漏掉预设分类
 async function ensureDefaultCategoriesForAll() {
   const users = await queryAll('SELECT id FROM users');
   for (const u of users) {
-    const chk = await queryOne('SELECT COUNT(*) AS c FROM categories WHERE owner_id=$1', [u.id]);
-    if (!chk || parseInt(chk.c, 10) === 0) {
-      for (const [l1, l2] of DEFAULT_CATEGORIES) {
+    let added = 0;
+    for (const [l1, l2] of DEFAULT_CATEGORIES) {
+      const exists = await queryOne(
+        'SELECT 1 FROM categories WHERE owner_id=$1 AND level1=$2 AND level2=$3 LIMIT 1',
+        [u.id, l1, l2]
+      );
+      if (!exists) {
         await query('INSERT INTO categories(owner_id,level1,level2) VALUES($1,$2,$3)', [u.id, l1, l2]);
+        added++;
       }
     }
+    if (added > 0) console.log(`[DB] 账号 ${u.id} 补全预设分类 ${added} 条`);
   }
 }
 

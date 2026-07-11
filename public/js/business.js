@@ -149,7 +149,7 @@ const Business = (() => {
       <div class="form-group"><label class="form-label">品牌</label><input type="text" class="form-input" id="m-brand"></div>
       <div class="form-group"><label class="form-label">一级分类 <span class="req">*</span></label><select class="form-select" id="m-category1" onchange="Business.onCat1Change()"><option value="">请选择</option>${level1Set.map(c => `<option>${c}</option>`).join('')}</select></div>
       <div class="form-group"><label class="form-label">二级分类</label><select class="form-select" id="m-category2"><option value="">请先选一级分类</option></select></div>
-      <div class="form-group"><label class="form-label">单位</label><select class="form-select" id="m-unit"><option>件</option><option>条</option><option>个</option><option>套</option><option>双</option></select></div>
+      <div class="form-group"><label class="form-label">单位</label><select class="form-select" id="m-unit"><option>件</option><option>条</option><option>个</option><option>套</option><option>双</option><option>米</option><option>千克</option></select></div>
       <div class="form-group"><label class="form-label">采购价</label><input type="number" class="form-input" id="m-purchase_price" min="0" step="0.01" value="0"></div>
       <div class="form-group"><label class="form-label">销售价</label><input type="number" class="form-input" id="m-sale_price" min="0" step="0.01" value="0"></div>`;
     App.openModal('添加商品', body, async () => {
