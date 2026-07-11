@@ -363,6 +363,29 @@ async function ensureExpenseItemsForAll() {
   }
 }
 
+// 修复历史迁移造成的孤立归属：owner_id 指向不存在用户的业务数据，统一归属到 admin
+async function fixOrphanedOwners() {
+  const admin = await queryOne("SELECT id FROM users WHERE username='admin'");
+  if (!admin) return;
+  const tables = ['customers', 'products', 'inventory', 'contracts', 'employees', 'work_hours', 'salaries', 'transactions', 'categories', 'expense_items'];
+  for (const t of tables) {
+    try {
+      await query(`UPDATE ${t} SET owner_id=$1 WHERE owner_id IS NOT NULL AND owner_id NOT IN (SELECT id FROM users)`, [admin.id]);
+    } catch (e) {
+      console.error('[DB] fixOrphanedOwners 失败(' + t + '):', e.message);
+    }
+  }
+  // 定向纠正：admin 的种子客户（张三面料厂/李四成衣店/王五贸易行，即 id 1/2/3）在历史迁移中
+  // 曾被打到其它账号（如 caoyanyan），这里把它们归回 admin。幂等：本就属 admin 的不动。
+  for (const sid of [1, 2, 3]) {
+    try {
+      await query('UPDATE customers SET owner_id=$1 WHERE id=$2 AND owner_id<>$1', [admin.id, sid]);
+    } catch (e) {
+      console.error('[DB] fixSeedCustomers 失败(' + sid + '):', e.message);
+    }
+  }
+}
+
 // settings 旧库主键为 key，改为复合主键 (owner_id, key)
 async function fixSettingsPkey() {
   try { await query('ALTER TABLE settings DROP CONSTRAINT settings_pkey'); }
@@ -532,6 +555,9 @@ async function init() {
   } else {
     console.log('[DB] 数据库已存在账号，跳过账号创建（示例数据按 owner 隔离）');
   }
+
+  // 5) 修复历史迁移造成的孤立归属（owner_id 指向不存在用户），统一归回 admin
+  await fixOrphanedOwners();
 
   setDbStatus(true);
  } catch (e) {

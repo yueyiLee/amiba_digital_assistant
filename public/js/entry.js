@@ -169,6 +169,7 @@ const Entry = (() => {
       // 重置表单
       document.getElementById('entryAmount').value = '';
       document.getElementById('entryNote').value = '';
+      recPage = 1; // 新录入跳回第一页，立即看到刚加的记录
       renderRecords();
       App.toast('录入成功', 'success');
       // 通知看板刷新
@@ -178,37 +179,94 @@ const Entry = (() => {
     }
   }
 
-  function renderRecords() {
-    // 按操作时间（id 降序 = 创建时间倒序）排列，显示最近20条
-    const txs = Storage.getTransactionsSync()
-      .sort((a, b) => b.id - a.id)
-      .slice(0, 20);
-    const container = document.getElementById('entryRecords');
-    document.getElementById('entryCount').textContent = `(共 ${Storage.getTransactionsSync().length} 条)`;
-    if (txs.length === 0) {
-      container.innerHTML = '<div class="empty-state">暂无录入记录</div>';
-      return;
+  // 记录列表：筛选（类型 / 时间范围 / 关键词）+ 分页
+  let recPage = 1;
+  const REC_PAGE_SIZE = 15;
+  const recFilters = { type: '', range: '', keyword: '' };
+
+  function computeRangeDates(range) {
+    if (!range) return { start: null, end: null };
+    const now = new Date();
+    const y = now.getFullYear();
+    if (range === 'year') return { start: `${y}-01-01`, end: `${y}-12-31` };
+    if (range === 'month') {
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const last = new Date(y, now.getMonth() + 1, 0).getDate();
+      return { start: `${y}-${m}-01`, end: `${y}-${m}-${last}` };
     }
-    container.innerHTML = txs.map(t => {
-      const isPos = t.amount > 0;
-      const parts = [];
-      // 显示业务日期
-      parts.push(t.date);
-      if (t.customer_name) parts.push(t.customer_name);
-      if (t.product_name) parts.push(t.product_name);
-      if (t.category) parts.push(t.category);
-      if (t.note) parts.push(t.note);
-      // 操作时间（created_at）
-      const opTime = t.created_at ? t.created_at.replace('T', ' ').substring(0, 16) : '';
-      return `<div class="record-item">
-        <div class="r-left">
-          <div class="r-type">${t.type}<span class="r-unit">${t.unit}</span></div>
-          <div class="r-date">${parts.join(' · ')}${opTime ? '　<span class="r-opt">录入于 ' + opTime + '</span>' : ''}</div>
-        </div>
-        <div class="r-amt ${isPos ? 'pos' : 'neg'}">${isPos ? '+' : '−'}${Calculator.fmtMoney(Math.abs(t.amount))}</div>
-        ${Auth.canEdit() ? `<button class="btn btn-danger btn-sm r-del" onclick="Entry.del(${t.id})">删</button>` : ''}
-      </div>`;
-    }).join('');
+    if (range === 'quarter') {
+      const ms = [0, 3, 6, 9];
+      const startM = ms[Math.floor(now.getMonth() / 3)];
+      const endM = startM + 2;
+      const last = new Date(y, endM + 1, 0).getDate();
+      return { start: `${y}-${String(startM + 1).padStart(2, '0')}-01`, end: `${y}-${String(endM + 1).padStart(2, '0')}-${last}` };
+    }
+    return { start: null, end: null };
+  }
+
+  function renderRecords() {
+    const { start, end } = computeRangeDates(recFilters.range);
+    // 1) 类型 + 时间范围交给 Storage 过滤（走后端语义）
+    let list = Storage.getTransactionsSync({
+      type: recFilters.type || null,
+      startDate: start,
+      endDate: end
+    });
+    // 2) 关键词：匹配 类型/单元/客户/商品/类别/备注
+    const kw = (recFilters.keyword || '').trim().toLowerCase();
+    if (kw) {
+      list = list.filter(t => {
+        const hay = [t.type, t.unit, t.customer_name, t.product_name, t.category, t.note]
+          .filter(Boolean).join(' ').toLowerCase();
+        return hay.includes(kw);
+      });
+    }
+    // 3) 按 id 降序（创建时间倒序）
+    list.sort((a, b) => b.id - a.id);
+    const total = list.length;
+    const totalPages = Math.max(1, Math.ceil(total / REC_PAGE_SIZE));
+    if (recPage > totalPages) recPage = totalPages;
+    const pageItems = list.slice((recPage - 1) * REC_PAGE_SIZE, recPage * REC_PAGE_SIZE);
+
+    document.getElementById('entryCount').textContent = `(共 ${total} 条)`;
+    const container = document.getElementById('entryRecords');
+    if (pageItems.length === 0) {
+      container.innerHTML = '<div class="empty-state">暂无匹配记录</div>';
+    } else {
+      container.innerHTML = pageItems.map(t => {
+        const isPos = t.amount > 0;
+        const parts = [];
+        parts.push(t.date);
+        if (t.customer_name) parts.push(t.customer_name);
+        if (t.product_name) parts.push(t.product_name);
+        if (t.category) parts.push(t.category);
+        if (t.note) parts.push(t.note);
+        const opTime = t.created_at ? t.created_at.replace('T', ' ').substring(0, 16) : '';
+        return `<div class="record-item">
+          <div class="r-left">
+            <div class="r-type">${escapeHtml(t.type)}<span class="r-unit">${escapeHtml(t.unit)}</span></div>
+            <div class="r-date">${parts.map(escapeHtml).join(' · ')}${opTime ? '　<span class="r-opt">录入于 ' + opTime + '</span>' : ''}</div>
+          </div>
+          <div class="r-amt ${isPos ? 'pos' : 'neg'}">${isPos ? '+' : '−'}${Calculator.fmtMoney(Math.abs(t.amount))}</div>
+          ${Auth.canEdit() ? `<button class="btn btn-danger btn-sm r-del" onclick="Entry.del(${t.id})">删</button>` : ''}
+        </div>`;
+      }).join('');
+    }
+    renderPager(totalPages);
+  }
+
+  function renderPager(totalPages) {
+    const p = document.getElementById('recPager');
+    if (!p) return;
+    if (totalPages <= 1) { p.innerHTML = ''; return; }
+    p.innerHTML = `
+      <button class="btn btn-sm ${recPage <= 1 ? 'disabled' : ''}" id="recPrev">上一页</button>
+      <span class="rec-page-info">第 ${recPage} / ${totalPages} 页</span>
+      <button class="btn btn-sm ${recPage >= totalPages ? 'disabled' : ''}" id="recNext">下一页</button>`;
+    const prev = document.getElementById('recPrev');
+    const next = document.getElementById('recNext');
+    if (prev && recPage > 1) prev.onclick = () => { recPage--; renderRecords(); };
+    if (next && recPage < totalPages) next.onclick = () => { recPage++; renderRecords(); };
   }
 
   async function del(id) {
@@ -229,6 +287,13 @@ const Entry = (() => {
     document.getElementById('dirIncome').addEventListener('click', () => setDirection('income'));
     document.getElementById('entrySubmit').addEventListener('click', submit);
     document.getElementById('entryType').addEventListener('change', applyTypeLinkage);
+    // 记录列表筛选
+    const recType = document.getElementById('recType');
+    const recRange = document.getElementById('recRange');
+    const recKeyword = document.getElementById('recKeyword');
+    if (recType) recType.addEventListener('change', (e) => { recFilters.type = e.target.value; recPage = 1; renderRecords(); });
+    if (recRange) recRange.addEventListener('change', (e) => { recFilters.range = e.target.value; recPage = 1; renderRecords(); });
+    if (recKeyword) recKeyword.addEventListener('input', (e) => { recFilters.keyword = e.target.value; recPage = 1; renderRecords(); });
     // 客户 / 商品 可搜索下拉（combobox），每次展开实时读取最新数据
     setupCombobox('entryCustomerInput', 'entryCustomerPanel', 'entryCustomerId', () => Storage.getCustomerOptions());
     setupCombobox('entryProductInput', 'entryProductPanel', 'entryProductId', () => Storage.getProductOptions());

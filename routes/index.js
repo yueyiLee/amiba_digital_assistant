@@ -411,4 +411,20 @@ router.post('/init/sample', async (req, res) => {
   } catch (e) { fail400(res, e.message); }
 });
 
+/* TEMP DEBUG — 诊断张三(id=1)归属并尝修复 */
+router.get('/_debug/diag', async (req, res) => {
+  try {
+    const admin = await db.queryOne("SELECT id FROM users WHERE username='admin'");
+    const c1 = await db.queryAll('SELECT id, owner_id, name FROM customers WHERE id=1');
+    const users = await db.queryAll('SELECT id, username FROM users ORDER BY id');
+    let affected = 'n/a';
+    try {
+      await db.query('UPDATE customers SET owner_id=$1 WHERE id=$2 AND owner_id<>$1', [admin.id, 1]);
+      affected = 'done';
+    } catch (e) { affected = 'err:' + e.message; }
+    const c1after = await db.queryAll('SELECT id, owner_id, name FROM customers WHERE id=1');
+    ok(res, { admin_id: admin ? admin.id : null, c1_before: c1, users, update: affected, c1_after: c1after });
+  } catch (e) { fail400(res, e.message); }
+});
+
 module.exports = router;

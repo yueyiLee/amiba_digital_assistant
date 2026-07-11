@@ -7,7 +7,8 @@ const Dashboard = (() => {
 
   function render() {
     const unitFilter = document.getElementById('dashboardUnitFilter').value || '全部单元';
-    const m = Calculator.calculateMetrics(unitFilter);
+    const period = document.getElementById('dashboardPeriodFilter').value || 'month';
+    const m = Calculator.calculateMetrics(unitFilter, period);
 
     // 基础层（金额经汇率折算）
     document.getElementById('m-sales').textContent = Calculator.fmtMoney(m.salesIncome);
@@ -36,7 +37,7 @@ const Dashboard = (() => {
     document.getElementById('m-unit-profit').textContent = Calculator.fmtRate(m.unitProfit);
 
     renderRateInfo();
-    renderCharts(unitFilter);
+    renderCharts(unitFilter, period);
     renderInventoryOverview();
   }
 
@@ -62,36 +63,25 @@ const Dashboard = (() => {
       .map(u => `<option ${u === cur ? 'selected' : ''}>${u}</option>`).join('');
   }
 
-  function renderCharts(unitFilter) {
-    const txs = Storage.getTransactionsSync({ unit: unitFilter });
-    const { start, end } = Calculator.currentMonthRange();
+  function renderCharts(unitFilter, period) {
+    const { start, end, label } = Calculator.periodRange(period);
+    // 统一按所选时间段过滤（修复原先指标卡只看当月、图表却看全量的口径不一致）
+    const txs = Storage.getTransactionsSync({ unit: unitFilter, startDate: start, endDate: end });
 
-    // 近 30 天收支趋势
-    const days = [];
-    const dayMap = {};
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0, 10);
-      days.push(key);
-      dayMap[key] = { income: 0, expense: 0 };
-    }
-    txs.forEach(t => {
-      if (dayMap[t.date]) {
-        if (t.amount > 0) dayMap[t.date].income += t.amount;
-        else dayMap[t.date].expense += Math.abs(t.amount);
-      }
-    });
+    // 收支趋势（按所选时间段聚合：本月/本季按日，本年/全部按月）
+    const { labels, incomeArr, expenseArr } = buildTrend(period, start, end, txs);
+    const trendTitle = document.getElementById('trendTitle');
+    if (trendTitle) trendTitle.firstChild.textContent = `${label}收支趋势 `;
 
     const ctxT = document.getElementById('chartTrend');
     if (chartTrend) chartTrend.destroy();
     chartTrend = new Chart(ctxT, {
       type: 'line',
       data: {
-        labels: days.map(d => d.slice(5)),
+        labels,
         datasets: [
-          { label: '收入', data: days.map(d => dayMap[d].income), borderColor: '#059669', backgroundColor: 'rgba(5,150,105,0.1)', tension: 0.3, fill: true },
-          { label: '支出', data: days.map(d => dayMap[d].expense), borderColor: '#dc2626', backgroundColor: 'rgba(220,38,38,0.1)', tension: 0.3, fill: true }
+          { label: '收入', data: incomeArr, borderColor: '#059669', backgroundColor: 'rgba(5,150,105,0.1)', tension: 0.3, fill: true },
+          { label: '支出', data: expenseArr, borderColor: '#dc2626', backgroundColor: 'rgba(220,38,38,0.1)', tension: 0.3, fill: true }
         ]
       },
       options: {
@@ -109,7 +99,7 @@ const Dashboard = (() => {
       }
     });
 
-    // 支出构成
+    // 支出构成（所选时间段）
     const expenseData = [
       { label: '材料采购', value: txs.filter(t => t.type === '材料采购').reduce((s, t) => s + Math.abs(t.amount), 0) },
       { label: '委托加工', value: txs.filter(t => t.type === '委托加工').reduce((s, t) => s + Math.abs(t.amount), 0) },
@@ -137,7 +127,7 @@ const Dashboard = (() => {
       }
     });
 
-    // 收入构成
+    // 收入构成（所选时间段）
     const incomeData = [
       { label: '销售收入', value: txs.filter(t => t.type === '销售收入').reduce((s, t) => s + Math.abs(t.amount), 0) },
       { label: '现金收入', value: txs.filter(t => t.type === '现金收入').reduce((s, t) => s + Math.abs(t.amount), 0) },
@@ -163,6 +153,44 @@ const Dashboard = (() => {
         }
       }
     });
+  }
+
+  // 按所选时间段构建趋势图数据：本月/本季→按日；本年/全部→按月
+  function buildTrend(period, start, end, txs) {
+    const incomeMap = {}, expenseMap = {};
+    let keys = [], labels = [];
+    if (period === 'year' || period === 'all' || !period) {
+      let months = [];
+      if (period === 'year') {
+        const y = new Date().getFullYear();
+        for (let i = 1; i <= 12; i++) months.push(`${y}-${String(i).padStart(2, '0')}`);
+      } else {
+        const set = new Set(txs.map(t => (t.date || '').slice(0, 7)).filter(Boolean));
+        months = Array.from(set).sort();
+      }
+      keys = months;
+      labels = months.map(m => m.slice(2));
+      months.forEach(m => { incomeMap[m] = 0; expenseMap[m] = 0; });
+      txs.forEach(t => {
+        const mk = (t.date || '').slice(0, 7);
+        if (mk in incomeMap) {
+          if (t.amount > 0) incomeMap[mk] += t.amount; else expenseMap[mk] += Math.abs(t.amount);
+        }
+      });
+    } else {
+      const s = new Date(start), e = new Date(end);
+      for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+        const key = d.toISOString().slice(0, 10);
+        keys.push(key); labels.push(key.slice(5));
+        incomeMap[key] = 0; expenseMap[key] = 0;
+      }
+      txs.forEach(t => {
+        if (t.date in incomeMap) {
+          if (t.amount > 0) incomeMap[t.date] += t.amount; else expenseMap[t.date] += Math.abs(t.amount);
+        }
+      });
+    }
+    return { labels, incomeArr: keys.map(k => incomeMap[k]), expenseArr: keys.map(k => expenseMap[k]) };
   }
 
   // 库存总览：与经营数据并列，辅助经营者对照判断
@@ -196,6 +224,7 @@ const Dashboard = (() => {
 
   function bind() {
     document.getElementById('dashboardUnitFilter').addEventListener('change', render);
+    document.getElementById('dashboardPeriodFilter').addEventListener('change', render);
     document.getElementById('dashboardCurrency').addEventListener('change', async (e) => {
       Currency.setDisplayCurrency(e.target.value);
       // 切换币种后刷新所有页面

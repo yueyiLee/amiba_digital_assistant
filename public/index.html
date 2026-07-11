@@ -64,6 +64,12 @@
         <div><div class="page-title">经营看板</div><div class="page-subtitle">实时掌握阿米巴经营状况</div></div>
         <div style="display:flex;gap:8px;align-items:center;">
           <select class="form-select" id="dashboardUnitFilter" style="width:auto;"><option>全部单元</option></select>
+          <select class="form-select" id="dashboardPeriodFilter" style="width:auto;">
+            <option value="month">本月</option>
+            <option value="quarter">本季</option>
+            <option value="year">本年</option>
+            <option value="all">全部时间</option>
+          </select>
           <select class="form-select" id="dashboardCurrency" style="width:auto;">
             <option value="CNY">¥ 人民币</option>
             <option value="USD">$ 美元</option>
@@ -74,8 +80,8 @@
       </div>
       <div id="rateInfoBar" class="rate-info-bar"></div>
       <div class="metric-grid row3">
-        <div class="metric-card"><div class="m-name">销售收入</div><div class="m-value positive" id="m-sales">¥ 0</div><div class="m-sub">当月销售</div></div>
-        <div class="metric-card"><div class="m-name">现金收入</div><div class="m-value positive" id="m-cash">¥ 0</div><div class="m-sub">当月现金</div></div>
+        <div class="metric-card"><div class="m-name">销售收入</div><div class="m-value positive" id="m-sales">¥ 0</div><div class="m-sub">本期销售</div></div>
+        <div class="metric-card"><div class="m-name">现金收入</div><div class="m-value positive" id="m-cash">¥ 0</div><div class="m-sub">本期现金</div></div>
         <div class="metric-card"><div class="m-name">总收入</div><div class="m-value positive" id="m-total-income">¥ 0</div><div class="m-sub">销售+现金</div></div>
       </div>
       <div class="metric-grid row3">
@@ -99,7 +105,7 @@
         <div class="metric-card"><div class="m-name">单位时间利润 <span class="help" data-tooltip="单位时间利润 = 利润 ÷ 总工时。反映每小时劳动创造的净利润。">?</span></div><div class="m-value" id="m-unit-profit">¥ 0/h</div><div class="m-sub">利润÷总工时</div></div>
       </div>
       <div class="chart-grid">
-        <div class="chart-card"><div class="c-title">近30天收支趋势 <span class="chart-unit-hint">纵轴：金额（折算后）</span></div><canvas id="chartTrend" height="160"></canvas></div>
+        <div class="chart-card"><div class="c-title" id="trendTitle">收支趋势 <span class="chart-unit-hint">纵轴：金额（折算后）</span></div><canvas id="chartTrend" height="160"></canvas></div>
         <div class="chart-card"><div class="c-title">支出构成</div><canvas id="chartExpense" height="160"></canvas></div>
         <div class="chart-card"><div class="c-title">收入构成</div><canvas id="chartIncome" height="160"></canvas></div>
       </div>
@@ -172,10 +178,30 @@
         </div>
         <div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-            <div style="font-size:14px;font-weight:600;">最近录入记录 <span id="entryCount" class="text-muted"></span></div>
+            <div style="font-size:14px;font-weight:600;">收支记录 <span id="entryCount" class="text-muted"></span></div>
             <button class="btn btn-secondary btn-sm" onclick="Export.exportTransactions()">导出收支明细</button>
           </div>
+          <div class="rec-filters">
+            <select class="form-select form-select-sm" id="recType">
+              <option value="">全部类型</option>
+              <option>材料采购</option>
+              <option>委托加工</option>
+              <option>杂费支出</option>
+              <option>税金</option>
+              <option>销售收入</option>
+              <option>现金收入</option>
+              <option>其他收入</option>
+            </select>
+            <select class="form-select form-select-sm" id="recRange">
+              <option value="">全部时间</option>
+              <option value="month">本月</option>
+              <option value="quarter">本季</option>
+              <option value="year">本年</option>
+            </select>
+            <input type="text" class="form-input form-input-sm" id="recKeyword" placeholder="搜索客户/商品/备注...">
+          </div>
           <div id="entryRecords"></div>
+          <div class="rec-pager" id="recPager"></div>
         </div>
       </div>
     </section>

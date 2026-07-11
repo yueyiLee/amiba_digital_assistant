@@ -23,14 +23,47 @@ const Calculator = (() => {
   }
 
   /**
+   * 时间段 → 起止日期（用于看板按时间段统算，替代原先硬编码的"仅当前月"）
+   * @param {string} period 'month' | 'quarter' | 'year' | 'all'(全部时间)
+   */
+  function periodRange(period) {
+    const now = new Date();
+    const y = now.getFullYear();
+    if (period === 'year') {
+      return { start: `${y}-01-01`, end: `${y}-12-31`, label: '本年' };
+    }
+    if (period === 'quarter') {
+      const ms = [0, 3, 6, 9];
+      const startM = ms[Math.floor(now.getMonth() / 3)];
+      const endM = startM + 2;
+      const last = new Date(y, endM + 1, 0).getDate();
+      return { start: `${y}-${String(startM + 1).padStart(2, '0')}-01`, end: `${y}-${String(endM + 1).padStart(2, '0')}-${last}`, label: '本季' };
+    }
+    if (period === 'all') {
+      return { start: null, end: null, label: '全部' };
+    }
+    // 默认：本月
+    const m = now.getMonth();
+    const last = new Date(y, m + 1, 0).getDate();
+    return { start: `${y}-${String(m + 1).padStart(2, '0')}-01`, end: `${y}-${String(m + 1).padStart(2, '0')}-${last}`, label: '本月' };
+  }
+
+  /**
    * 计算全部 15 项指标
    * @param {string} unitFilter 单元筛选（'全部单元' 或具体单元名）
+   * @param {string} period 时间段（'month' | 'quarter' | 'year' | 'all'）
    */
-  function calculateMetrics(unitFilter) {
-    const { start, end, month } = currentMonthRange();
+  function calculateMetrics(unitFilter, period) {
+    const { start, end, label } = periodRange(period);
     const txs = Storage.getTransactionsSync({ unit: unitFilter, startDate: start, endDate: end });
     const employees = Storage.getEmployeesSync();
-    const workHours = Storage.getWorkHoursSync(month);
+    // 工时按所选时间段过滤（work_hours.month 为 YYYY-MM）
+    const whAll = Storage.getWorkHoursSync();
+    const workHours = whAll.filter(wh => {
+      if (!start) return true;
+      const mk = (wh.month || '').slice(0, 7);
+      return mk >= start.slice(0, 7) && mk <= end.slice(0, 7);
+    });
 
     // ---- 基础层 ----
     const salesIncome = txs.filter(t => t.type === '销售收入').reduce((s, t) => s + t.amount, 0);   // 1
@@ -66,7 +99,7 @@ const Calculator = (() => {
       materialCost, processCost, consumeCost, miscCost,
       addedValue, totalSalary, taxCost, profit,
       totalHours, unitAddedValue, unitSalary, unitProfit,
-      month
+      periodLabel: label
     };
   }
 
@@ -85,5 +118,5 @@ const Calculator = (() => {
     return Currency.getSymbol();
   }
 
-  return { calculateMetrics, currentMonth, currentMonthRange, fmtMoney, fmtHour, fmtRate, getCurrency };
+  return { calculateMetrics, periodRange, currentMonth, currentMonthRange, fmtMoney, fmtHour, fmtRate, getCurrency };
 })();

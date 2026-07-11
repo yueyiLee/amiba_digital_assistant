@@ -167,6 +167,14 @@ body {
 .record-item .r-amt.neg { color: #dc2626; }
 .record-item .r-del { margin-left: 8px; }
 
+/* 录入页右侧：记录筛选栏 + 分页 */
+.rec-filters { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.form-select-sm, .form-input-sm { height: 32px; font-size: 13px; padding: 4px 8px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; color: #0f172a; }
+.form-input-sm { flex: 1; min-width: 120px; }
+.rec-pager { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 12px; }
+.rec-pager .rec-page-info { font-size: 13px; color: #64748b; }
+.rec-pager .btn.disabled { opacity: .45; cursor: not-allowed; }
+
 /* ========== 表格 ========== */
 .list-toolbar { display: flex; justify-content: space-between; align-items: center; margin: 12px 0 10px; }
 .list-title { font-size: 14px; font-weight: 600; color: #0f172a; }
