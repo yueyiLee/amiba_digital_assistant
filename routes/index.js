@@ -34,6 +34,15 @@ router.post('/transactions', async (req, res) => {
   try {
     const { amount, type, unit, date, customer_id, product_id, note, category } = req.body || {};
     if (amount == null || !type || !date) return fail400(res, '缺少必要字段（金额/类型/日期）');
+    // 归属校验：客户/商品必须是当前账号自己的，杜绝跨账号引用泄露
+    if (customer_id) {
+      const c = await db.queryOne('SELECT 1 FROM customers WHERE id=$1 AND owner_id=$2', [customer_id, req.user.id]);
+      if (!c) return fail400(res, '客户不存在或无权访问');
+    }
+    if (product_id) {
+      const p = await db.queryOne('SELECT 1 FROM products WHERE id=$1 AND owner_id=$2', [product_id, req.user.id]);
+      if (!p) return fail400(res, '商品不存在或无权访问');
+    }
     const result = await db.insertReturning(
       'INSERT INTO transactions(amount,type,unit,customer_id,product_id,date,note,category,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id',
       [amount, type, unit || '全公司', customer_id || null, product_id || null, date, note || '', category || '', req.user.id]
@@ -278,6 +287,9 @@ router.post('/contracts', async (req, res) => {
   try {
     const { contract_no, customer_id, amount, status, start_date, end_date, note } = req.body || {};
     if (!contract_no || !customer_id || amount == null) return fail400(res, '请填写必填项（合同号/客户/金额）');
+    // 归属校验：合同关联的客户必须是当前账号自己的
+    const cust = await db.queryOne('SELECT 1 FROM customers WHERE id=$1 AND owner_id=$2', [customer_id, req.user.id]);
+    if (!cust) return fail400(res, '客户不存在或无权访问');
     const result = await db.insertReturning(
       'INSERT INTO contracts(contract_no,customer_id,amount,status,start_date,end_date,note,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
       [contract_no, customer_id, amount, status || '进行中', start_date || '', end_date || '', note || '', req.user.id]
@@ -291,6 +303,11 @@ router.put('/contracts/:id', async (req, res) => {
     const c = req.body || {};
     const old = await db.queryOne('SELECT * FROM contracts WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
     if (!old) return fail404(res, '合同不存在');
+    // 归属校验：若更换了关联客户，必须是当前账号自己的
+    if (c.customer_id && c.customer_id !== old.customer_id) {
+      const cust2 = await db.queryOne('SELECT 1 FROM customers WHERE id=$1 AND owner_id=$2', [c.customer_id, req.user.id]);
+      if (!cust2) return fail400(res, '客户不存在或无权访问');
+    }
     await db.query('UPDATE contracts SET contract_no=$1,customer_id=$2,amount=$3,status=$4,start_date=$5,end_date=$6,note=$7 WHERE id=$8 AND owner_id=$9',
       [c.contract_no ?? old.contract_no, c.customer_id ?? old.customer_id, c.amount ?? old.amount,
        c.status ?? old.status, c.start_date ?? old.start_date, c.end_date ?? old.end_date, c.note ?? old.note, req.params.id, req.user.id]);
