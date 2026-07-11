@@ -32,13 +32,21 @@ router.get('/transactions', async (req, res) => {
 
 router.post('/transactions', async (req, res) => {
   try {
-    const { amount, type, unit, date, customer_id, product_id, note } = req.body || {};
+    const { amount, type, unit, date, customer_id, product_id, note, category } = req.body || {};
     if (amount == null || !type || !date) return fail400(res, '缺少必要字段（金额/类型/日期）');
     const result = await db.insertReturning(
-      'INSERT INTO transactions(amount,type,unit,customer_id,product_id,date,note,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
-      [amount, type, unit || '全公司', customer_id || null, product_id || null, date, note || '', req.user.id]
+      'INSERT INTO transactions(amount,type,unit,customer_id,product_id,date,note,category,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id',
+      [amount, type, unit || '全公司', customer_id || null, product_id || null, date, note || '', category || '', req.user.id]
     );
     ok(res, { id: result.rows[0].id });
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 1b. expense_items 支出项预设（委托加工/杂费，后台配置） ========== */
+router.get('/expense-items', async (req, res) => {
+  try {
+    const rows = await db.queryAll('SELECT id, kind, name FROM expense_items WHERE owner_id=$1 ORDER BY id', [req.user.id]);
+    ok(res, rows);
   } catch (e) { fail400(res, e.message); }
 });
 

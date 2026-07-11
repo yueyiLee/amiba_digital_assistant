@@ -30,7 +30,21 @@ const DEFAULT_CATEGORIES = [
   ['外套', '风衣'], ['外套', '棉服'], ['外套', '羽绒服'],
   ['裙装', '连衣裙'], ['裙装', '半身裙'],
   ['针织', '毛衣'], ['针织', '针织衫'],
-  ['配饰', '皮带'], ['配饰', '帽子'], ['配饰', '围巾'], ['配饰', '袜子']
+  ['配饰', '皮带'], ['配饰', '帽子'], ['配饰', '围巾'], ['配饰', '袜子'],
+  ['原材料', '纱线'], ['原材料', '坯布']
+];
+
+// 支出项细分预设（后台配置，前台暂不提供手动增删入口）
+// kind: 'processing' 委托加工支出类别 | 'misc' 杂费支出类别
+// 所有账号同步拥有，便于在录入时按交易类型联动选择。
+const DEFAULT_EXPENSE_ITEMS = [
+  // 委托加工支出类别
+  ['processing', '染色费'], ['processing', '制造费用'], ['processing', '后整理费'],
+  // 杂费支出类别
+  ['misc', '培训费'], ['misc', '差旅费'], ['misc', '水电费'], ['misc', '维修费用'],
+  ['misc', '产品运营费用'], ['misc', '车辆费用'], ['misc', '库存利息'], ['misc', '其他管理杂费'],
+  ['misc', '医保社保保费'], ['misc', '门店租金'], ['misc', '物业费'],
+  ['misc', '机器设备折旧费'], ['misc', '财务费用'], ['misc', '预提所得税']
 ];
 
 // 云端 SDK 客户端延迟创建（不在模块加载时缓存）：
@@ -247,6 +261,7 @@ const INIT_TABLES_SQL = `
     product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
     date TEXT NOT NULL,
     note TEXT DEFAULT '',
+    category TEXT DEFAULT '',
     owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW()
   );
@@ -264,6 +279,13 @@ const INIT_TABLES_SQL = `
     level2 TEXT DEFAULT '',
     owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS expense_items (
+    id SERIAL PRIMARY KEY,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE
+  );
 `;
 
 // ===== 初始化：建表 + 种子数据（多租户账号隔离）=====
@@ -272,7 +294,7 @@ const INIT_TABLES_SQL = `
 
 // 给旧库补齐 owner_id 列（新库建表时已有，ALTER 幂等）
 async function ensureOwnerColumns() {
-  const tables = ['customers', 'products', 'inventory', 'contracts', 'employees', 'work_hours', 'salaries', 'transactions', 'settings', 'categories'];
+  const tables = ['customers', 'products', 'inventory', 'contracts', 'employees', 'work_hours', 'salaries', 'transactions', 'settings', 'categories', 'expense_items'];
   for (const t of tables) {
     try {
       await query(`ALTER TABLE ${t} ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE`);
@@ -290,6 +312,15 @@ async function ensureInventoryColumns() {
     } catch (e) {
       if (!/already exists/i.test(e.message || '')) throw e;
     }
+  }
+}
+
+// transactions 旧库补齐 category 列（支出项细分：委托加工类别 / 杂费类别）
+async function ensureTransactionCategoryColumn() {
+  try {
+    await query('ALTER TABLE transactions ADD COLUMN category TEXT DEFAULT \'\'');
+  } catch (e) {
+    if (!/already exists/i.test(e.message || '')) throw e;
   }
 }
 
@@ -313,6 +344,25 @@ async function ensureDefaultCategoriesForAll() {
   }
 }
 
+// 确保每一个账号都拥有完整的支出项细分预设（逐条补全，不删除用户/后台自定义项）
+async function ensureExpenseItemsForAll() {
+  const users = await queryAll('SELECT id FROM users');
+  for (const u of users) {
+    let added = 0;
+    for (const [kind, name] of DEFAULT_EXPENSE_ITEMS) {
+      const exists = await queryOne(
+        'SELECT 1 FROM expense_items WHERE owner_id=$1 AND kind=$2 AND name=$3 LIMIT 1',
+        [u.id, kind, name]
+      );
+      if (!exists) {
+        await query('INSERT INTO expense_items(owner_id,kind,name) VALUES($1,$2,$3)', [u.id, kind, name]);
+        added++;
+      }
+    }
+    if (added > 0) console.log(`[DB] 账号 ${u.id} 补全支出项预设 ${added} 条`);
+  }
+}
+
 // settings 旧库主键为 key，改为复合主键 (owner_id, key)
 async function fixSettingsPkey() {
   try { await query('ALTER TABLE settings DROP CONSTRAINT settings_pkey'); }
@@ -328,7 +378,7 @@ async function migrateLegacyData() {
   const admin = await queryOne("SELECT id FROM users WHERE username='admin'");
   const editor = await queryOne("SELECT id FROM users WHERE username='editor'");
   if (admin) {
-    const tables = ['customers', 'products', 'inventory', 'contracts', 'employees', 'work_hours', 'salaries', 'transactions', 'settings', 'categories'];
+    const tables = ['customers', 'products', 'inventory', 'contracts', 'employees', 'work_hours', 'salaries', 'transactions', 'settings', 'categories', 'expense_items'];
     for (const t of tables) {
       await query(`UPDATE ${t} SET owner_id=$1 WHERE owner_id IS NULL`, [admin.id]);
     }
@@ -451,11 +501,17 @@ async function init() {
   // 2.5) inventory 补齐 created_at / updated_at 时间戳列
   await ensureInventoryColumns();
 
+  // 2.6) transactions 补齐 category 列（支出项细分）
+  await ensureTransactionCategoryColumn();
+
   // 3) 旧库数据迁移（幂等）：无主共享数据分配给 admin，editor 重新生成等价数据
   await migrateLegacyData();
 
   // 3.5) 确保每个账号都拥有服装行业默认分类（无分类账号无法录入商品）
   await ensureDefaultCategoriesForAll();
+
+  // 3.6) 确保每个账号都拥有支出项细分预设（委托加工类别 / 杂费类别）
+  await ensureExpenseItemsForAll();
 
   // 4) 首次启动：无用户则创建 admin/editor 并各自生成完整示例
   const r = await query('SELECT COUNT(*) AS c FROM users');

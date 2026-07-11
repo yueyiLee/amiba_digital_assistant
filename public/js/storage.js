@@ -6,14 +6,14 @@ const Storage = (() => {
   let cached = {
     transactions: [], customers: [], products: [], inventory: [],
     employees: [], workHours: [], contracts: [], settings: {},
-    categories: [], users: []
+    categories: [], users: [], expenseItems: []
   };
 
   // 全量加载（Promise.all 并发）
   async function refreshCache() {
     const [
       transactions, customers, products, inventory,
-      employees, workHours, contracts, settings, categories, users
+      employees, workHours, contracts, settings, categories, users, expenseItems
     ] = await Promise.all([
       API.get('/transactions'),
       API.get('/customers'),
@@ -24,9 +24,10 @@ const Storage = (() => {
       API.get('/contracts'),
       API.get('/settings'),
       API.get('/categories'),
-      API.get('/users').catch(() => [])  // 非 admin 可能无权限
+      API.get('/users').catch(() => []),  // 非 admin 可能无权限
+      API.get('/expense-items').catch(() => [])
     ]);
-    cached = { transactions, customers, products, inventory, employees, workHours, contracts, settings, categories, users };
+    cached = { transactions, customers, products, inventory, employees, workHours, contracts, settings, categories, users, expenseItems };
     return cached;
   }
 
@@ -54,6 +55,10 @@ const Storage = (() => {
   function getSettingsSync() { return Object.assign({}, cached.settings); }
   function getCategoriesSync() { return cached.categories.slice(); }
   function getUsersSync() { return cached.users.slice(); }
+  // 支出项预设下拉（按 kind 过滤：'processing' 委托加工 | 'misc' 杂费）
+  function getExpenseItemsSync(kind) {
+    return cached.expenseItems.filter(e => e.kind === kind).map(e => ({ id: e.id, name: e.name }));
+  }
 
   // ---- 选项下拉数据 ----
   function getCustomerOptions() { return cached.customers.map(c => ({ id: c.id, name: c.name })); }
@@ -75,6 +80,7 @@ const Storage = (() => {
     getCustomersSync, getProductsSync, getInventorySync, getContractsSync,
     getSettingsSync, getCategoriesSync, getUsersSync,
     getCustomerOptions, getProductOptions, getUnitList, getActiveUnits,
+    getExpenseItemsSync,
     _cached: () => cached
   };
 })();

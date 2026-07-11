@@ -10,8 +10,57 @@ const Entry = (() => {
     income: ['销售收入', '现金收入', '其他收入']
   };
 
+  // 支出类型 → 表单项联动配置
+  // customer/product：是否显示客户/商品；cat：显示哪个支出项细分下拉（'processing' 委托加工 | 'misc' 杂费）
+  const EXPENSE_LINKAGE = {
+    '材料采购': { customer: true, product: true, cat: null },
+    '委托加工': { customer: true, product: false, cat: 'processing' },
+    '杂费支出': { customer: false, product: false, cat: 'misc' },
+    '税金': { customer: true, product: true, cat: null }
+  };
+
+  // 根据当前方向 + 交易类型，显示/隐藏 客户 / 商品 / 支出项细分 字段，并填充对应选项
+  function applyTypeLinkage() {
+    const type = document.getElementById('entryType').value;
+    const cfg = direction === 'income'
+      ? { customer: true, product: true, cat: null }
+      : (EXPENSE_LINKAGE[type] || { customer: true, product: true, cat: null });
+
+    const custGroup = document.getElementById('entryCustomerGroup');
+    const prodGroup = document.getElementById('entryProductGroup');
+    const catGroup = document.getElementById('entryExpenseCatGroup');
+    const catSel = document.getElementById('entryExpenseCat');
+
+    custGroup.style.display = cfg.customer ? '' : 'none';
+    prodGroup.style.display = cfg.product ? '' : 'none';
+
+    if (cfg.cat) {
+      catGroup.style.display = '';
+      document.getElementById('entryExpenseCatLabel').textContent =
+        (cfg.cat === 'processing' ? '加工类别' : '杂费类别') + ' (必选)';
+      const items = Storage.getExpenseItemsSync(cfg.cat);
+      catSel.innerHTML = items.length
+        ? items.map(i => `<option value="${i.name}">${escapeHtml(i.name)}</option>`).join('')
+        : '<option value="">（暂无可选类别）</option>';
+    } else {
+      catGroup.style.display = 'none';
+      catSel.innerHTML = '';
+    }
+
+    // 隐藏的字段清空已选值，避免提交时带入脏数据
+    if (!cfg.customer) {
+      document.getElementById('entryCustomerId').value = '';
+      document.getElementById('entryCustomerInput').value = '';
+    }
+    if (!cfg.product) {
+      document.getElementById('entryProductId').value = '';
+      document.getElementById('entryProductInput').value = '';
+    }
+  }
+
   function render() {
     renderTypeOptions();
+    applyTypeLinkage();
     renderUnitOptions();
     // 更新金额符号为设置中的货币
     document.querySelector('.amount-wrap .cur').textContent = Calculator.getCurrency();
@@ -82,6 +131,7 @@ const Entry = (() => {
       sign.textContent = '+'; sign.style.color = '#059669'; sign.style.background = '#ecfdf5';
     }
     renderTypeOptions();
+    applyTypeLinkage();
   }
 
   async function submit() {
@@ -97,6 +147,14 @@ const Entry = (() => {
     if (!amount || amount <= 0) return App.toast('金额必须为有效正数', 'error');
     if (!date) return App.toast('请选择日期', 'error');
 
+    // 支出项细分：委托加工→加工类别；杂费支出→杂费类别；其余类型无此字段
+    const linkCfg = direction === 'income'
+      ? { cat: null }
+      : (EXPENSE_LINKAGE[type] || { cat: null });
+    const category = linkCfg.cat
+      ? (document.getElementById('entryExpenseCat').value || null)
+      : null;
+
     // 方向决定正负：收入 Math.abs，支出 -Math.abs
     const signedAmount = direction === 'income' ? Math.abs(amount) : -Math.abs(amount);
 
@@ -105,7 +163,7 @@ const Entry = (() => {
         amount: signedAmount, type, unit,
         customer_id: customerId ? Number(customerId) : null,
         product_id: productId ? Number(productId) : null,
-        date, note
+        date, note, category
       });
       await Storage.refreshCache();
       // 重置表单
@@ -138,6 +196,7 @@ const Entry = (() => {
       parts.push(t.date);
       if (t.customer_name) parts.push(t.customer_name);
       if (t.product_name) parts.push(t.product_name);
+      if (t.category) parts.push(t.category);
       if (t.note) parts.push(t.note);
       // 操作时间（created_at）
       const opTime = t.created_at ? t.created_at.replace('T', ' ').substring(0, 16) : '';
@@ -169,6 +228,7 @@ const Entry = (() => {
     document.getElementById('dirExpense').addEventListener('click', () => setDirection('expense'));
     document.getElementById('dirIncome').addEventListener('click', () => setDirection('income'));
     document.getElementById('entrySubmit').addEventListener('click', submit);
+    document.getElementById('entryType').addEventListener('change', applyTypeLinkage);
     // 客户 / 商品 可搜索下拉（combobox），每次展开实时读取最新数据
     setupCombobox('entryCustomerInput', 'entryCustomerPanel', 'entryCustomerId', () => Storage.getCustomerOptions());
     setupCombobox('entryProductInput', 'entryProductPanel', 'entryProductId', () => Storage.getProductOptions());

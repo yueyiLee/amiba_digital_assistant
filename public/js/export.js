@@ -70,14 +70,14 @@ const Export = (() => {
       date: t.date, type: t.type, direction: t.amount > 0 ? '收入' : '支出',
       amount: Math.abs(t.amount), currency: cur,
       unit: t.unit, customer: t.customer_name || '', product: t.product_name || '',
-      note: t.note || ''
+      category: t.category || '', note: t.note || ''
     }));
     doExport(rows, [
       { key: 'date', label: '日期' }, { key: 'type', label: '类型' },
       { key: 'direction', label: '收支方向' }, { key: 'amount', label: '金额' },
       { key: 'currency', label: '币种' }, { key: 'unit', label: '归属部门' },
       { key: 'customer', label: '客户' }, { key: 'product', label: '商品' },
-      { key: 'note', label: '备注' }
+      { key: 'category', label: '支出类别' }, { key: 'note', label: '备注' }
     ], '收支明细');
   }
 
