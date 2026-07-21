@@ -131,21 +131,95 @@ const Entry = (() => {
 
   function renderTypeOptionsForQuery() { renderTypeChips(); }
 
-  // 收支查询页：杂费类别下拉，仅在「全部方向」或「支出」时展示
+  // 收支查询页：杂费类别多选搜索组件，仅在「全部方向」或「支出」时展示
   function renderCategoryFilter() {
-    const sel = document.getElementById('recCategory');
-    const label = document.getElementById('recCategoryLabel');
-    if (!sel || !label) return;
+    const row = document.getElementById('recCategoryRow');
+    if (!row) return;
     const visible = !recFilters.dir || recFilters.dir === 'expense';
-    label.style.display = visible ? '' : 'none';
-    sel.style.display = visible ? '' : 'none';
-    if (!visible) { recFilters.category = ''; sel.value = ''; return; }
+    row.style.display = visible ? '' : 'none';
+    if (!visible) { recFilters.category = []; }
+    renderCategoryTags();
+  }
 
-    const items = Storage.getExpenseItemsSync('misc');
-    const current = recFilters.category || '';
-    const options = ['<option value="">全部杂费类别</option>']
-      .concat(items.map(i => `<option value="${escapeHtml(i.name)}"${i.name === current ? ' selected' : ''}>${escapeHtml(i.name)}</option>`));
-    sel.innerHTML = options.join('');
+  function renderCategoryTags() {
+    const tagsEl = document.getElementById('recCategoryTags');
+    if (!tagsEl) return;
+    const selected = recFilters.category || [];
+    tagsEl.innerHTML = selected.map(name => `
+      <span class="multi-select-tag" data-name="${escapeHtml(name)}">
+        ${escapeHtml(name)}
+        <span class="remove" data-name="${escapeHtml(name)}">&times;</span>
+      </span>
+    `).join('');
+    tagsEl.querySelectorAll('.remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const name = e.target.dataset.name;
+        recFilters.category = (recFilters.category || []).filter(n => n !== name);
+        recPage = 1;
+        renderCategoryOptions();
+        renderRecords();
+      });
+    });
+  }
+
+  function renderCategoryOptions(query = '') {
+    const panel = document.getElementById('recCategoryPanel');
+    if (!panel) return;
+    const items = Storage.getExpenseItemsSync('misc').map(i => i.name);
+    const q = (query || '').trim().toLowerCase();
+    const filtered = q ? items.filter(n => n.toLowerCase().includes(q)) : items;
+    const selected = new Set(recFilters.category || []);
+
+    if (filtered.length === 0) {
+      panel.innerHTML = '<div class="multi-select-empty">无匹配类别</div>';
+    } else {
+      panel.innerHTML = filtered.map(name => `
+        <div class="multi-select-option${selected.has(name) ? ' selected' : ''}" data-name="${escapeHtml(name)}">
+          ${selected.has(name) ? '✓ ' : ''}${escapeHtml(name)}
+        </div>
+      `).join('');
+    }
+
+    panel.querySelectorAll('.multi-select-option').forEach(opt => {
+      opt.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        const name = opt.dataset.name;
+        const set = new Set(recFilters.category || []);
+        if (set.has(name)) set.delete(name); else set.add(name);
+        recFilters.category = Array.from(set);
+        recPage = 1;
+        renderCategoryTags();
+        renderCategoryOptions(document.getElementById('recCategoryInput').value);
+        renderRecords();
+      });
+    });
+  }
+
+  function setupCategoryMultiSelect() {
+    const input = document.getElementById('recCategoryInput');
+    const panel = document.getElementById('recCategoryPanel');
+    const wrap = document.getElementById('recCategoryMulti');
+    if (!input || !panel || !wrap) return;
+
+    input.addEventListener('focus', () => {
+      renderCategoryOptions(input.value);
+      panel.classList.add('open');
+    });
+    input.addEventListener('input', () => {
+      renderCategoryOptions(input.value);
+      panel.classList.add('open');
+    });
+    input.addEventListener('blur', () => {
+      setTimeout(() => {
+        panel.classList.remove('open');
+        input.value = '';
+      }, 150);
+    });
+    // 点击组件容器保持 focus
+    wrap.addEventListener('click', (e) => {
+      if (e.target !== input && !e.target.closest('.multi-select-tag')) input.focus();
+    });
   }
 
   function renderUnitOptions() {
@@ -255,7 +329,7 @@ const Entry = (() => {
   let recPage = 1;
   const REC_PAGE_SIZE = 15;
   let lastQueryRows = [];
-  const recFilters = { dir: '', type: [], category: '', dateStart: '', dateEnd: '', customer: '', product: '', amtMin: '', amtMax: '' };
+  const recFilters = { dir: '', type: [], category: [], dateStart: '', dateEnd: '', customer: '', product: '', amtMin: '', amtMax: '' };
 
   function computeRangeDates(range) {
     if (!range) return { start: null, end: null };
@@ -281,7 +355,7 @@ const Entry = (() => {
   function resetFilters() {
     recFilters.dir = '';
     recFilters.type = [];
-    recFilters.category = '';
+    recFilters.category = [];
     recFilters.dateStart = '';
     recFilters.dateEnd = '';
     recFilters.customer = '';
@@ -315,8 +389,8 @@ const Entry = (() => {
     else if (f.dir === 'expense') list = list.filter(t => t.amount < 0);
     // 3) 费用类型多选（空数组=不匹配任何类型，配合「全选」总控实现快速反选）
     if (f.type) list = list.filter(t => f.type.includes(t.type));
-    // 3.1) 杂费类别筛选（仅对支出类记录生效；收入类记录 category 为空，不会被误过滤）
-    if (f.category) list = list.filter(t => t.category === f.category);
+    // 3.1) 杂费类别多选筛选（仅对支出类记录生效；收入类记录 category 为空，不会被误过滤）
+    if (f.category && f.category.length > 0) list = list.filter(t => f.category.includes(t.category));
     // 3) 客户名称模糊
     const cust = (f.customer || '').trim().toLowerCase();
     if (cust) list = list.filter(t => (t.customer_name || '').toLowerCase().includes(cust));
@@ -485,7 +559,7 @@ const Entry = (() => {
         recPage = 1;
         renderTypeChips();
         // 切换到收入方向时清空杂费类别筛选
-        if (recFilters.dir === 'income') { recFilters.category = ''; }
+        if (recFilters.dir === 'income') { recFilters.category = []; }
         renderCategoryFilter();
         renderRecords();
       });
@@ -496,10 +570,7 @@ const Entry = (() => {
     bindFilter('recProduct', 'product', 'input');
     bindFilter('recAmtMin', 'amtMin', 'input');
     bindFilter('recAmtMax', 'amtMax', 'input');
-    const recCategoryEl = document.getElementById('recCategory');
-    if (recCategoryEl) {
-      recCategoryEl.addEventListener('change', (e) => { recFilters.category = e.target.value; recPage = 1; renderRecords(); });
-    }
+    setupCategoryMultiSelect();
     bindTypeAllToggle();
     const recResetBtn = document.getElementById('recResetBtn');
     if (recResetBtn) recResetBtn.addEventListener('click', resetFilters);

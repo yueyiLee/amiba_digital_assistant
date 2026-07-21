@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>阿米巴经营数字助手</title>
-<link rel="icon" type="image/x-icon" href="images/favicon.ico?v=20260721b">
-<link rel="stylesheet" href="css/style.css?v=20260721b">
+<link rel="icon" type="image/x-icon" href="images/favicon.ico?v=20260721c">
+<link rel="stylesheet" href="css/style.css?v=20260721c">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -282,42 +282,65 @@
       <!-- ===== 收支查询 ===== -->
       <section class="page-section" id="page-entry-query">
         <div class="page-title">收支查询</div>
-        <div class="query-toolbar">
-          <div class="q-row">
-            <label class="q-label">收支方向：</label>
-            <select class="form-select" id="recDir" style="width:auto;" title="收支方向">
-              <option value="">全部方向</option>
-              <option value="income">收入</option>
-              <option value="expense">支出</option>
-            </select>
-            <label class="q-label">费用类型：</label>
+        <div class="query-toolbar entry-query-toolbar">
+          <div class="q-row q-row-head">
+            <div class="q-group">
+              <label class="q-label">收支方向</label>
+              <select class="form-select" id="recDir" title="收支方向">
+                <option value="">全部方向</option>
+                <option value="income">收入</option>
+                <option value="expense">支出</option>
+              </select>
+            </div>
+            <div class="q-group q-group-date">
+              <label class="q-label">交易日期范围</label>
+              <div class="q-date-range">
+                <input type="date" class="form-input" id="recDateStart" title="开始日期">
+                <span class="text-muted">至</span>
+                <input type="date" class="form-input" id="recDateEnd" title="结束日期">
+              </div>
+            </div>
+            <div class="q-actions">
+              <button class="btn btn-secondary btn-sm" id="recResetBtn">重置</button>
+              <button class="btn btn-primary btn-sm btn-export" onclick="Export.exportTransactions(Entry.getQueryRows())">导出当前结果</button>
+            </div>
+          </div>
+
+          <div class="q-row q-row-types">
+            <label class="q-label">费用类型</label>
             <label class="type-chip type-chip-all" id="recTypeAll" title="全选/取消全选">
               <input type="checkbox" checked>
               <span>全选</span>
             </label>
             <div class="q-type-chips" id="recTypeChips"></div>
-            <label class="q-label" id="recCategoryLabel" style="display:none;">杂费类别：</label>
-            <select class="form-select" id="recCategory" style="display:none;width:auto;" title="仅对支出类记录生效">
-              <option value="">全部杂费类别</option>
-            </select>
           </div>
-          <div class="q-row">
-            <label class="q-label">交易日期范围：</label>
-            <input type="date" class="form-input" id="recDateStart" style="width:auto;" title="开始日期">
-            <span class="text-muted">至</span>
-            <input type="date" class="form-input" id="recDateEnd" style="width:auto;" title="结束日期">
+
+          <div class="q-row q-row-categories" id="recCategoryRow" style="display:none;">
+            <label class="q-label">杂费类别</label>
+            <div class="multi-select" id="recCategoryMulti">
+              <div class="multi-select-tags" id="recCategoryTags"></div>
+              <input type="text" class="multi-select-input" id="recCategoryInput" placeholder="搜索或选择类别…" autocomplete="off">
+              <div class="multi-select-panel" id="recCategoryPanel"></div>
+            </div>
           </div>
-          <div class="q-row">
-            <label class="q-label">客户名称：</label>
-            <input type="text" class="form-input" id="recCustomer" style="width:140px;">
-            <label class="q-label">商品名称：</label>
-            <input type="text" class="form-input" id="recProduct" style="width:140px;">
-            <label class="q-label">金额范围：</label>
-            <input type="number" class="form-input" id="recAmtMin" placeholder="≥" style="width:100px;">
-            <span class="text-muted">至</span>
-            <input type="number" class="form-input" id="recAmtMax" placeholder="≤" style="width:100px;">
-            <button class="btn btn-secondary btn-sm" id="recResetBtn">重置</button>
-            <button class="btn btn-primary btn-sm btn-export" onclick="Export.exportTransactions(Entry.getQueryRows())">导出当前结果</button>
+
+          <div class="q-row q-row-more">
+            <div class="q-group">
+              <label class="q-label">客户名称</label>
+              <input type="text" class="form-input" id="recCustomer" style="width:160px;" placeholder="模糊搜索">
+            </div>
+            <div class="q-group">
+              <label class="q-label">商品名称</label>
+              <input type="text" class="form-input" id="recProduct" style="width:160px;" placeholder="模糊搜索">
+            </div>
+            <div class="q-group q-group-amount">
+              <label class="q-label">金额范围</label>
+              <div class="q-amount-range">
+                <input type="number" class="form-input" id="recAmtMin" placeholder="≥" style="width:110px;">
+                <span class="text-muted">至</span>
+                <input type="number" class="form-input" id="recAmtMax" placeholder="≤" style="width:110px;">
+              </div>
+            </div>
           </div>
         </div>
         <div class="list-toolbar"><span class="list-title">收支记录 <span id="entryCount" class="text-muted"></span></span></div>
@@ -631,7 +654,7 @@
 <script src="js/calculator.js?v=20260716j"></script>
 <script src="js/auth.js?v=20260715da"></script>
 <script src="js/dashboard.js?v=20260715da"></script>
-<script src="js/entry.js?v=20260721b"></script>
+<script src="js/entry.js?v=20260721c"></script>
 <script src="js/business.js?v=20260715da"></script>
 <script src="js/employees.js?v=20260716j"></script>
 <script src="js/settings.js?v=20260715da"></script>

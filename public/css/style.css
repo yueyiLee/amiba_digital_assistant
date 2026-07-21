@@ -455,6 +455,50 @@ input:checked + .slider:before { transform: translateX(20px); }
 .type-chip.type-chip-all { font-weight: 600; border-style: dashed; }
 .type-chip.type-chip-all:has(input:checked) { background: #dbeafe; border-color: #2563eb; color: #1e40af; }
 
+/* 收支查询：更整齐的筛选布局 */
+.entry-query-toolbar { display: flex; flex-direction: column; gap: 12px; }
+.entry-query-toolbar .q-row { width: 100%; align-items: flex-start; }
+.entry-query-toolbar .q-row-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.entry-query-toolbar .q-row-head .q-group { display: flex; align-items: center; gap: 8px; }
+.entry-query-toolbar .q-row-head .q-group-date { flex: 1; min-width: 280px; }
+.entry-query-toolbar .q-row-head .q-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.entry-query-toolbar .q-date-range, .entry-query-toolbar .q-amount-range { display: flex; align-items: center; gap: 6px; }
+.entry-query-toolbar .q-row-types, .entry-query-toolbar .q-row-categories, .entry-query-toolbar .q-row-more {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+}
+.entry-query-toolbar .q-row-types .q-label,
+.entry-query-toolbar .q-row-categories .q-label,
+.entry-query-toolbar .q-row-more .q-label { margin-right: 4px; }
+.entry-query-toolbar .q-row-more .q-group { display: flex; align-items: center; gap: 8px; }
+
+/* 多选搜索组件（用于杂费类别） */
+.multi-select {
+  position: relative; min-width: 260px; max-width: 480px; flex: 1;
+  border: 1px solid #cbd5e1; border-radius: 6px; background: #fff;
+  padding: 4px 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  transition: border-color .15s;
+}
+.multi-select:focus-within { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.1); }
+.multi-select-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.multi-select-tag {
+  background: #eff6ff; border: 1px solid #3b82f6; color: #1d4ed8; border-radius: 4px;
+  padding: 2px 6px; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;
+}
+.multi-select-tag .remove { cursor: pointer; font-weight: 700; line-height: 1; }
+.multi-select-tag .remove:hover { color: #dc2626; }
+.multi-select-input { border: none; outline: none; flex: 1; min-width: 120px; font-size: 13px; padding: 4px; background: transparent; }
+.multi-select-panel {
+  position: absolute; top: 100%; left: 0; margin-top: 4px; background: #fff; border: 1px solid #e2e8f0;
+  border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-height: 220px; overflow-y: auto;
+  z-index: 100; min-width: 100%; display: none;
+}
+.multi-select-panel.open { display: block; }
+.multi-select-option { padding: 7px 10px; font-size: 13px; cursor: pointer; border-bottom: 1px solid #f1f5f9; }
+.multi-select-option:last-child { border-bottom: none; }
+.multi-select-option:hover { background: #f1f5f9; }
+.multi-select-option.selected { background: #eff6ff; color: #1d4ed8; }
+.multi-select-empty { padding: 10px; font-size: 13px; color: #94a3b8; text-align: center; }
+
 /* 收支类型管理页：状态徽标与行内勾选 */
 .badge-ok { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 12px; background: #dcfce7; color: #059669; }
 .badge-off { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 12px; background: #f1f5f9; color: #64748b; }
