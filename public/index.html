@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>阿米巴经营数字助手</title>
-<link rel="icon" type="image/x-icon" href="images/favicon.ico?v=20260716j">
-<link rel="stylesheet" href="css/style.css?v=20260716j">
+<link rel="icon" type="image/x-icon" href="images/favicon.ico?v=20260721b">
+<link rel="stylesheet" href="css/style.css?v=20260721b">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -291,7 +291,15 @@
               <option value="expense">支出</option>
             </select>
             <label class="q-label">费用类型：</label>
+            <label class="type-chip type-chip-all" id="recTypeAll" title="全选/取消全选">
+              <input type="checkbox" checked>
+              <span>全选</span>
+            </label>
             <div class="q-type-chips" id="recTypeChips"></div>
+            <label class="q-label" id="recCategoryLabel" style="display:none;">杂费类别：</label>
+            <select class="form-select" id="recCategory" style="display:none;width:auto;" title="仅对支出类记录生效">
+              <option value="">全部杂费类别</option>
+            </select>
           </div>
           <div class="q-row">
             <label class="q-label">交易日期范围：</label>
@@ -623,7 +631,7 @@
 <script src="js/calculator.js?v=20260716j"></script>
 <script src="js/auth.js?v=20260715da"></script>
 <script src="js/dashboard.js?v=20260715da"></script>
-<script src="js/entry.js?v=20260715da"></script>
+<script src="js/entry.js?v=20260721b"></script>
 <script src="js/business.js?v=20260715da"></script>
 <script src="js/employees.js?v=20260716j"></script>
 <script src="js/settings.js?v=20260715da"></script>

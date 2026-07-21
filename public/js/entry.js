@@ -63,6 +63,7 @@ const Entry = (() => {
   // 收支查询页：填充筛选下拉并渲染记录列表（右半）
   function renderQuery() {
     renderTypeOptionsForQuery();
+    renderCategoryFilter();
     renderRecords();
   }
 
@@ -80,6 +81,7 @@ const Entry = (() => {
   // 收支查询页的"类型"多选 chips：根据当前方向显示对应类型，默认全选
   function renderTypeChips() {
     const container = document.getElementById('recTypeChips');
+    const allCb = document.querySelector('#recTypeAll input');
     if (!container) return;
     const types = Storage.getExpenseTypesSync(recFilters.dir || null, { enabledOnly: true });
 
@@ -96,18 +98,55 @@ const Entry = (() => {
       </label>
     `).join('');
 
+    // 同步全选总控状态
+    if (allCb) allCb.checked = types.length > 0 && selected.length === types.length;
+
     // 绑定多选事件
     container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
       cb.addEventListener('change', () => {
         const vals = Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(c => c.value);
         recFilters.type = vals;
+        if (allCb) allCb.checked = types.length > 0 && vals.length === types.length;
         recPage = 1;
         renderRecords();
       });
     });
   }
 
+  // 绑定费用类型「全选」总控
+  function bindTypeAllToggle() {
+    const allChip = document.getElementById('recTypeAll');
+    if (!allChip) return;
+    allChip.addEventListener('change', (e) => {
+      const input = allChip.querySelector('input[type="checkbox"]');
+      const checked = input ? input.checked : e.target.checked;
+      const container = document.getElementById('recTypeChips');
+      const types = Storage.getExpenseTypesSync(recFilters.dir || null, { enabledOnly: true });
+      if (container) container.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = checked; });
+      recFilters.type = checked ? types.map(t => t.name) : [];
+      recPage = 1;
+      renderRecords();
+    });
+  }
+
   function renderTypeOptionsForQuery() { renderTypeChips(); }
+
+  // 收支查询页：杂费类别下拉，仅在「全部方向」或「支出」时展示
+  function renderCategoryFilter() {
+    const sel = document.getElementById('recCategory');
+    const label = document.getElementById('recCategoryLabel');
+    if (!sel || !label) return;
+    const visible = !recFilters.dir || recFilters.dir === 'expense';
+    label.style.display = visible ? '' : 'none';
+    sel.style.display = visible ? '' : 'none';
+    if (!visible) { recFilters.category = ''; sel.value = ''; return; }
+
+    const items = Storage.getExpenseItemsSync('misc');
+    const current = recFilters.category || '';
+    const options = ['<option value="">全部杂费类别</option>']
+      .concat(items.map(i => `<option value="${escapeHtml(i.name)}"${i.name === current ? ' selected' : ''}>${escapeHtml(i.name)}</option>`));
+    sel.innerHTML = options.join('');
+  }
 
   function renderUnitOptions() {
     const sel = document.getElementById('entryUnit');
@@ -216,7 +255,7 @@ const Entry = (() => {
   let recPage = 1;
   const REC_PAGE_SIZE = 15;
   let lastQueryRows = [];
-  const recFilters = { dir: '', type: [], dateStart: '', dateEnd: '', customer: '', product: '', amtMin: '', amtMax: '' };
+  const recFilters = { dir: '', type: [], category: '', dateStart: '', dateEnd: '', customer: '', product: '', amtMin: '', amtMax: '' };
 
   function computeRangeDates(range) {
     if (!range) return { start: null, end: null };
@@ -242,6 +281,7 @@ const Entry = (() => {
   function resetFilters() {
     recFilters.dir = '';
     recFilters.type = [];
+    recFilters.category = '';
     recFilters.dateStart = '';
     recFilters.dateEnd = '';
     recFilters.customer = '';
@@ -258,6 +298,7 @@ const Entry = (() => {
     setVal('recAmtMin', '');
     setVal('recAmtMax', '');
     renderTypeChips(); // 重置方向后重新生成类型 chips（全部类型全选）
+    renderCategoryFilter(); // 重置后展示杂费类别
     renderRecords();
   }
 
@@ -272,8 +313,10 @@ const Entry = (() => {
     // 2) 收支方向
     if (f.dir === 'income') list = list.filter(t => t.amount > 0);
     else if (f.dir === 'expense') list = list.filter(t => t.amount < 0);
-    // 3) 费用类型多选（无选中则不过滤）
-    if (f.type && f.type.length > 0) list = list.filter(t => f.type.includes(t.type));
+    // 3) 费用类型多选（空数组=不匹配任何类型，配合「全选」总控实现快速反选）
+    if (f.type) list = list.filter(t => f.type.includes(t.type));
+    // 3.1) 杂费类别筛选（仅对支出类记录生效；收入类记录 category 为空，不会被误过滤）
+    if (f.category) list = list.filter(t => t.category === f.category);
     // 3) 客户名称模糊
     const cust = (f.customer || '').trim().toLowerCase();
     if (cust) list = list.filter(t => (t.customer_name || '').toLowerCase().includes(cust));
@@ -434,13 +477,16 @@ const Entry = (() => {
       if (!el) return;
       el.addEventListener(evt, (e) => { recFilters[key] = e.target.value; recPage = 1; renderRecords(); });
     };
-    // 收支方向变化时联动类型 chips
+    // 收支方向变化时联动类型 chips 与杂费类别筛选
     const recDirEl = document.getElementById('recDir');
     if (recDirEl) {
       recDirEl.addEventListener('change', (e) => {
         recFilters.dir = e.target.value;
         recPage = 1;
         renderTypeChips();
+        // 切换到收入方向时清空杂费类别筛选
+        if (recFilters.dir === 'income') { recFilters.category = ''; }
+        renderCategoryFilter();
         renderRecords();
       });
     }
@@ -450,6 +496,11 @@ const Entry = (() => {
     bindFilter('recProduct', 'product', 'input');
     bindFilter('recAmtMin', 'amtMin', 'input');
     bindFilter('recAmtMax', 'amtMax', 'input');
+    const recCategoryEl = document.getElementById('recCategory');
+    if (recCategoryEl) {
+      recCategoryEl.addEventListener('change', (e) => { recFilters.category = e.target.value; recPage = 1; renderRecords(); });
+    }
+    bindTypeAllToggle();
     const recResetBtn = document.getElementById('recResetBtn');
     if (recResetBtn) recResetBtn.addEventListener('click', resetFilters);
     // 客户 / 商品 可搜索下拉（combobox），每次展开实时读取最新数据

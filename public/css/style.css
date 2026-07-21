@@ -452,6 +452,8 @@ input:checked + .slider:before { transform: translateX(20px); }
 .type-chip input { display: none; }
 .type-chip span { pointer-events: none; }
 .type-chip:has(input:checked) { background: #eff6ff; border-color: #3b82f6; color: #1d4ed8; }
+.type-chip.type-chip-all { font-weight: 600; border-style: dashed; }
+.type-chip.type-chip-all:has(input:checked) { background: #dbeafe; border-color: #2563eb; color: #1e40af; }
 
 /* 收支类型管理页：状态徽标与行内勾选 */
 .badge-ok { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 12px; background: #dcfce7; color: #059669; }
