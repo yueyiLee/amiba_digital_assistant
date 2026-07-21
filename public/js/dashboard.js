@@ -30,6 +30,7 @@ const Dashboard = (() => {
     // 基础层（金额经汇率折算）
     document.getElementById('m-sales').textContent = Calculator.fmtMoney(m.salesIncome);
     document.getElementById('m-cash').textContent = Calculator.fmtMoney(m.cashIncome);
+    document.getElementById('m-other').textContent = Calculator.fmtMoney(m.otherIncome);
     document.getElementById('m-total-income').textContent = Calculator.fmtMoney(m.totalIncome);
     document.getElementById('m-receivable').textContent = Calculator.fmtMoney(m.receivable);
     document.getElementById('m-material').textContent = Calculator.fmtMoney(m.materialCost);

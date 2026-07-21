@@ -138,7 +138,8 @@ const Calculator = (() => {
     // ---- 基础层 ----
     const salesIncome = txs.filter(t => t.type === '销售收入').reduce((s, t) => s + t.amount, 0);   // 1
     const cashIncome = txs.filter(t => t.type === '现金收入').reduce((s, t) => s + t.amount, 0);    // 2
-    const totalIncome = salesIncome + cashIncome;                                                     // 3
+    const otherIncome = txs.filter(t => t.type === '其他收入').reduce((s, t) => s + t.amount, 0);    // 2.5 其他收入（如利息、残值、补贴等）
+    const totalIncome = salesIncome + cashIncome + otherIncome;                                       // 3 总收入 = 销售 + 现金 + 其他
 
     const materialCost = sumByType(txs, '材料采购');      // 4
     const processCost = sumByType(txs, '委托加工');       // 5
@@ -174,7 +175,7 @@ const Calculator = (() => {
     const unitProfit = totalHours > 0 ? profit / totalHours : 0;            // 15 单位时间利润
 
     return {
-      salesIncome, cashIncome, totalIncome, receivable,
+      salesIncome, cashIncome, otherIncome, totalIncome, receivable,
       materialCost, processCost, consumeCost, miscCost,
       addedValue, totalSalary, taxCost, totalExpense, cashExpense, payable, profit,
       totalHours, unitAddedValue, unitSalary, unitProfit,
