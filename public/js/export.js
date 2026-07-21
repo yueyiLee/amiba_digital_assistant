@@ -62,9 +62,9 @@ const Export = (() => {
     App.toast(`已导出 ${rows.length} 条数据（${fmt}格式）`, 'success');
   }
 
-  // 导出收支明细
-  function exportTransactions() {
-    const txs = Storage.getTransactionsSync();
+  // 导出收支明细（rows 可选：传入则导出该查询结果，否则导出全部）
+  function exportTransactions(src) {
+    const txs = (src && src.length) ? src : Storage.getTransactionsSync();
     const cur = Calculator.getCurrency();
     const rows = txs.map(t => ({
       date: t.date, type: t.type, direction: t.amount > 0 ? '收入' : '支出',
@@ -81,9 +81,9 @@ const Export = (() => {
     ], '收支明细');
   }
 
-  // 导出合同
-  function exportContracts() {
-    const list = Storage.getContractsSync();
+  // 导出合同（rows 可选：当前查询结果）
+  function exportContracts(src) {
+    const list = (src && src.length) ? src : Storage.getContractsSync();
     const rows = list.map(c => ({
       contract_no: c.contract_no, customer: c.customer_name || '',
       amount: c.amount, status: c.status,
@@ -97,9 +97,9 @@ const Export = (() => {
     ], '合同');
   }
 
-  // 导出客户
-  function exportCustomers() {
-    const list = Storage.getCustomersSync();
+  // 导出客户（rows 可选：当前查询结果）
+  function exportCustomers(src) {
+    const list = (src && src.length) ? src : Storage.getCustomersSync();
     const rows = list.map(c => ({
       name: c.name, type: c.type, contact: c.contact || '', address: c.address || ''
     }));
@@ -109,9 +109,9 @@ const Export = (() => {
     ], '客户');
   }
 
-  // 导出商品
-  function exportProducts() {
-    const list = Storage.getProductsSync();
+  // 导出商品（rows 可选：当前查询结果）
+  function exportProducts(src) {
+    const list = (src && src.length) ? src : Storage.getProductsSync();
     const rows = list.map(p => ({
       name: p.name, brand: p.brand || '', category1: p.category1, category2: p.category2 || '',
       unit: p.unit, purchase_price: p.purchase_price, sale_price: p.sale_price
@@ -124,23 +124,28 @@ const Export = (() => {
     ], '商品');
   }
 
-  // 导出员工（含当月工时与工资）
-  function exportEmployees() {
-    const employees = Storage.getEmployeesSync();
-    const month = Calculator.currentMonth();
-    const workHours = Storage.getWorkHoursSync(month);
+  // 导出员工（rows 可选：传入已计算的行则直接使用，否则按当前月计算工时工资）
+  function exportEmployees(src) {
     const cur = Calculator.getCurrency();
-    const rows = employees.map(emp => {
-      const wh = workHours.find(w => w.employee_id === emp.id);
-      const hours = wh ? wh.hours : 0;
-      return {
-        name: emp.name, position: emp.position || '',
-        hourly_rate: emp.hourly_rate, currency: cur,
-        month, hours, salary: Math.round(hours * emp.hourly_rate),
-        join_date: emp.join_date || ''
-      };
-    });
-    doExport(rows, [
+    let data;
+    if (src && src.length && 'hours' in src[0]) {
+      data = src; // 页面已计算好（含所选月份工时/工资）
+    } else {
+      const employees = (src && src.length) ? src : Storage.getEmployeesSync();
+      const month = Calculator.currentMonth();
+      const workHours = Storage.getWorkHoursSync(month);
+      data = employees.map(emp => {
+        const wh = workHours.find(w => w.employee_id === emp.id);
+        const hours = wh ? wh.hours : 0;
+        return {
+          name: emp.name, position: emp.position || '',
+          hourly_rate: emp.hourly_rate, currency: cur,
+          month, hours, salary: Math.round(hours * emp.hourly_rate),
+          join_date: emp.join_date || ''
+        };
+      });
+    }
+    doExport(data, [
       { key: 'name', label: '姓名' }, { key: 'position', label: '岗位' },
       { key: 'hourly_rate', label: '时薪' }, { key: 'currency', label: '币种' },
       { key: 'month', label: '月份' }, { key: 'hours', label: '工时' },
@@ -148,5 +153,21 @@ const Export = (() => {
     ], '员工');
   }
 
-  return { exportTransactions, exportContracts, exportCustomers, exportProducts, exportEmployees };
+  // 导出员工档案（姓名/岗位/时薪/入职日期，无工时工资）
+  function exportEmployeeRoster(src) {
+    const cur = Calculator.getCurrency();
+    const list = (src && src.length && 'name' in src[0])
+      ? src
+      : Storage.getEmployeesSync().map(emp => ({
+          name: emp.name, position: emp.position || '',
+          hourly_rate: emp.hourly_rate, currency: cur, join_date: emp.join_date || ''
+        }));
+    doExport(list, [
+      { key: 'name', label: '姓名' }, { key: 'position', label: '岗位' },
+      { key: 'hourly_rate', label: '时薪' }, { key: 'currency', label: '币种' },
+      { key: 'join_date', label: '入职日期' }
+    ], '员工档案');
+  }
+
+  return { exportTransactions, exportContracts, exportCustomers, exportProducts, exportEmployees, exportEmployeeRoster };
 })();

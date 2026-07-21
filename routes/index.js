@@ -51,11 +51,135 @@ router.post('/transactions', async (req, res) => {
   } catch (e) { fail400(res, e.message); }
 });
 
-/* ========== 1b. expense_items 支出项预设（委托加工/杂费，后台配置） ========== */
+router.put('/transactions/:id', async (req, res) => {
+  try {
+    const t = req.body || {};
+    const old = await db.queryOne('SELECT * FROM transactions WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
+    if (!old) return fail404(res, '记录不存在');
+    // 归属校验：客户/商品必须是当前账号自己的
+    if (t.customer_id) {
+      const c = await db.queryOne('SELECT 1 FROM customers WHERE id=$1 AND owner_id=$2', [t.customer_id, req.user.id]);
+      if (!c) return fail400(res, '客户不存在或无权访问');
+    }
+    if (t.product_id) {
+      const p = await db.queryOne('SELECT 1 FROM products WHERE id=$1 AND owner_id=$2', [t.product_id, req.user.id]);
+      if (!p) return fail400(res, '商品不存在或无权访问');
+    }
+    await db.query(
+      'UPDATE transactions SET amount=$1,type=$2,unit=$3,customer_id=$4,product_id=$5,date=$6,note=$7,category=$8 WHERE id=$9 AND owner_id=$10',
+      [t.amount ?? old.amount, t.type ?? old.type, t.unit ?? old.unit,
+       t.customer_id === undefined ? old.customer_id : (t.customer_id || null),
+       t.product_id === undefined ? old.product_id : (t.product_id || null),
+       t.date ?? old.date, t.note ?? old.note,
+       t.category === undefined ? old.category : (t.category || ''), req.params.id, req.user.id]
+    );
+    ok(res, { success: true });
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 1b. expense_items 支出项预设（委托加工/杂费，账号隔离，支持前台配置） ========== */
 router.get('/expense-items', async (req, res) => {
   try {
-    const rows = await db.queryAll('SELECT id, kind, name FROM expense_items WHERE owner_id=$1 ORDER BY id', [req.user.id]);
+    const rows = await db.queryAll('SELECT id, kind, name, note FROM expense_items WHERE owner_id=$1 ORDER BY id', [req.user.id]);
     ok(res, rows);
+  } catch (e) { fail400(res, e.message); }
+});
+
+router.post('/expense-items', async (req, res) => {
+  try {
+    const { kind, name, note } = req.body || {};
+    if (!kind || !name || !String(name).trim()) return fail400(res, '缺少必要字段（类型/名称）');
+    const nm = String(name).trim();
+    const nt = note == null ? '' : String(note).trim();
+    const dup = await db.queryOne('SELECT 1 FROM expense_items WHERE owner_id=$1 AND kind=$2 AND name=$3', [req.user.id, kind, nm]);
+    if (dup) return fail400(res, '该类别已存在');
+    const result = await db.insertReturning(
+      'INSERT INTO expense_items(owner_id,kind,name,note) VALUES($1,$2,$3,$4) RETURNING id',
+      [req.user.id, kind, nm, nt]
+    );
+    ok(res, { id: result.rows[0].id });
+  } catch (e) { fail400(res, e.message); }
+});
+
+router.put('/expense-items/:id', async (req, res) => {
+  try {
+    const { name, note } = req.body || {};
+    if (!name || !String(name).trim()) return fail400(res, '名称必填');
+    const old = await db.queryOne('SELECT * FROM expense_items WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
+    if (!old) return fail404(res, '类别不存在');
+    const nm = String(name).trim();
+    const nt = note == null ? '' : String(note).trim();
+    const dup = await db.queryOne('SELECT 1 FROM expense_items WHERE owner_id=$1 AND kind=$2 AND name=$3 AND id<>$4', [req.user.id, old.kind, nm, req.params.id]);
+    if (dup) return fail400(res, '该类别已存在');
+    await db.query('UPDATE expense_items SET name=$1, note=$2 WHERE id=$3 AND owner_id=$4', [nm, nt, req.params.id, req.user.id]);
+    ok(res, { success: true });
+  } catch (e) { fail400(res, e.message); }
+});
+
+router.delete('/expense-items/:id', async (req, res) => {
+  try {
+    const exist = await db.queryOne('SELECT id FROM expense_items WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
+    if (!exist) return fail404(res, '类别不存在');
+    await db.query('DELETE FROM expense_items WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
+    ok(res, { success: true });
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 1c. expense_types 收支类型（可配置：方向/联动/启停，账号隔离） ========== */
+router.get('/expense-types', async (req, res) => {
+  try {
+    const { direction, enabled } = req.query;
+    let sql = 'SELECT id, name, direction, link_customer, link_product, link_cat, enabled FROM expense_types WHERE owner_id=$1';
+    const params = [req.user.id];
+    if (direction) { params.push(direction); sql += ` AND direction=$${params.length}`; }
+    if (enabled === 'true') { params.push(true); sql += ` AND enabled=$${params.length}`; }
+    sql += ' ORDER BY direction, id';
+    const rows = await db.queryAll(sql, params);
+    ok(res, rows);
+  } catch (e) { fail400(res, e.message); }
+});
+
+router.post('/expense-types', async (req, res) => {
+  try {
+    const { name, direction, link_customer, link_product, link_cat } = req.body || {};
+    if (!name || !String(name).trim()) return fail400(res, '类型名称必填');
+    if (direction !== 'income' && direction !== 'expense') return fail400(res, '方向必须是 income 或 expense');
+    const nm = String(name).trim();
+    const dup = await db.queryOne('SELECT 1 FROM expense_types WHERE owner_id=$1 AND name=$2 AND direction=$3', [req.user.id, nm, direction]);
+    if (dup) return fail400(res, '该方向下已存在同名类型');
+    const result = await db.insertReturning(
+      'INSERT INTO expense_types(owner_id,name,direction,link_customer,link_product,link_cat,enabled) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',
+      [req.user.id, nm, direction, !!link_customer, !!link_product, link_cat || '', true]
+    );
+    ok(res, { id: result.rows[0].id });
+  } catch (e) { fail400(res, e.message); }
+});
+
+router.put('/expense-types/:id', async (req, res) => {
+  try {
+    const { name, direction, link_customer, link_product, link_cat, enabled } = req.body || {};
+    if (!name || !String(name).trim()) return fail400(res, '类型名称必填');
+    const old = await db.queryOne('SELECT * FROM expense_types WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
+    if (!old) return fail404(res, '类型不存在');
+    const nm = String(name).trim();
+    const dir = direction || old.direction;
+    if (dir !== 'income' && dir !== 'expense') return fail400(res, '方向必须是 income 或 expense');
+    const dup = await db.queryOne('SELECT 1 FROM expense_types WHERE owner_id=$1 AND name=$2 AND direction=$3 AND id<>$4', [req.user.id, nm, dir, req.params.id]);
+    if (dup) return fail400(res, '该方向下已存在同名类型');
+    await db.query(
+      'UPDATE expense_types SET name=$1, direction=$2, link_customer=$3, link_product=$4, link_cat=$5, enabled=$6 WHERE id=$7 AND owner_id=$8',
+      [nm, dir, !!link_customer, !!link_product, link_cat || '', !!enabled, req.params.id, req.user.id]
+    );
+    ok(res, { success: true });
+  } catch (e) { fail400(res, e.message); }
+});
+
+router.delete('/expense-types/:id', async (req, res) => {
+  try {
+    const exist = await db.queryOne('SELECT id FROM expense_types WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
+    if (!exist) return fail404(res, '类型不存在');
+    await db.query('DELETE FROM expense_types WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
+    ok(res, { success: true });
   } catch (e) { fail400(res, e.message); }
 });
 
@@ -242,14 +366,21 @@ router.get('/employees', async (req, res) => {
 
 router.post('/employees', async (req, res) => {
   try {
-    const { name, position, hourly_rate, join_date } = req.body || {};
+    const { name, position, hourly_rate, join_date, status, leave_date } = req.body || {};
     if (!name) return fail400(res, '姓名必填');
     if (hourly_rate == null || hourly_rate <= 0) return fail400(res, '时薪必须大于 0');
     const result = await db.insertReturning(
-      'INSERT INTO employees(name,position,hourly_rate,join_date,owner_id) VALUES($1,$2,$3,$4,$5) RETURNING id',
-      [name, position || '', hourly_rate, join_date || '', req.user.id]
+      'INSERT INTO employees(name,position,hourly_rate,join_date,status,leave_date,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',
+      [name, position || '', hourly_rate, join_date || '', status || 'active', leave_date || '', req.user.id]
     );
-    ok(res, { id: result.rows[0].id });
+    const newId = result.rows[0].id;
+    // 写入「入职」状态变更记录（含变更后岗位/时薪快照）
+    const today = new Date().toISOString().slice(0, 10);
+    await db.query(
+      'INSERT INTO employee_status_history(employee_id,status,change_type,position,hourly_rate,changed_date,note,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+      [newId, 'active', '入职', position || '', hourly_rate || 0, join_date || today, '新增入职', req.user.id]
+    );
+    ok(res, { id: newId });
   } catch (e) { fail400(res, e.message); }
 });
 
@@ -258,8 +389,86 @@ router.put('/employees/:id', async (req, res) => {
     const e = req.body || {};
     const old = await db.queryOne('SELECT * FROM employees WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
     if (!old) return fail404(res, '员工不存在');
-    await db.query('UPDATE employees SET name=$1,position=$2,hourly_rate=$3,join_date=$4 WHERE id=$5 AND owner_id=$6',
-      [e.name ?? old.name, e.position ?? old.position, e.hourly_rate ?? old.hourly_rate, e.join_date ?? old.join_date, req.params.id, req.user.id]);
+    // 状态变更必须通过 PATCH /status 单独处理，此处仅更新基础属性
+    await db.query('UPDATE employees SET name=$1,position=$2,hourly_rate=$3,join_date=$4,leave_date=$5 WHERE id=$6 AND owner_id=$7',
+      [e.name ?? old.name, e.position ?? old.position, e.hourly_rate ?? old.hourly_rate, e.join_date ?? old.join_date, e.leave_date ?? old.leave_date ?? '', req.params.id, req.user.id]);
+    // 同步刷新「最近一条在岗状态记录」的岗位/时薪/变更登记日期快照，使员工信息页与工时页展示信息与历史绑定
+    const needUpdateHistory = e.position !== undefined || e.hourly_rate !== undefined || e.join_date !== undefined;
+    if (needUpdateHistory) {
+      await db.query(
+        `UPDATE employee_status_history h
+         SET position = COALESCE($1, h.position), hourly_rate = COALESCE($2, h.hourly_rate), changed_date = COALESCE($3, h.changed_date)
+         WHERE h.id = (
+           SELECT id FROM employee_status_history
+           WHERE employee_id=$4 AND owner_id=$5 AND status='active'
+           ORDER BY changed_date DESC, id DESC LIMIT 1
+         )`,
+        [e.position !== undefined ? (e.position || '') : null,
+         e.hourly_rate !== undefined ? (e.hourly_rate || 0) : null,
+         e.join_date !== undefined ? (e.join_date || '') : null,
+         Number(req.params.id), req.user.id]
+      );
+    }
+    ok(res, { success: true });
+  } catch (e) { fail400(res, e.message); }
+});
+
+// 状态变更历史：为离职/复职提供可追溯的时间线，支撑按月在岗判断
+router.get('/employees/:id/status-history', async (req, res) => {
+  try {
+    const rows = await db.queryAll(
+      'SELECT id, employee_id, status, change_type, position, hourly_rate, changed_date, note, created_at FROM employee_status_history WHERE employee_id=$1 AND owner_id=$2 ORDER BY changed_date ASC, id ASC',
+      [req.params.id, req.user.id]
+    );
+    ok(res, rows);
+  } catch (e) { fail400(res, e.message); }
+});
+
+// 全量状态历史：前端缓存层一次性拉取当前账号下所有员工的状态变更
+router.get('/employee-status-history-all', async (req, res) => {
+  try {
+    const rows = await db.queryAll(
+      'SELECT id, employee_id, status, change_type, position, hourly_rate, changed_date, note, created_at FROM employee_status_history WHERE owner_id=$1 ORDER BY employee_id ASC, changed_date ASC, id ASC',
+      [req.user.id]
+    );
+    ok(res, rows);
+  } catch (e) { fail400(res, e.message); }
+});
+
+// 标记离职 / 复职（软状态切换，不删除数据，历史工时与工资保留）
+router.patch('/employees/:id/status', async (req, res) => {
+  try {
+    const { status, leave_date, note, position, hourly_rate, changed_date } = req.body || {};
+    if (!status || !['active', 'left'].includes(status)) return fail400(res, 'status 必须是 active 或 left');
+    const old = await db.queryOne('SELECT * FROM employees WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
+    if (!old) return fail404(res, '员工不存在');
+    const today = new Date().toISOString().slice(0, 10);
+    const changedDate = status === 'left'
+      ? (leave_date || changed_date || old.leave_date || today)
+      : (changed_date || today);
+    const newLeave = status === 'left' ? changedDate : '';
+    // change_type：由旧状态推导（active→left 为离职；left→active 为复职）
+    const changeType = (old.status || 'active') === 'left' ? '复职' : '离职';
+    // 岗位/时薪快照：优先用请求体（编辑弹窗提交的最新值），否则用员工当前值
+    const snapPos = (position !== undefined && position !== null) ? position : (old.position || '');
+    const snapRate = (hourly_rate !== undefined && hourly_rate !== null) ? hourly_rate : (old.hourly_rate || 0);
+
+    // 幂等补全：该员工首次变更时，先补一条从入职日期开始的 active 记录，确保后续可按月在岗判断完整
+    const hasHistory = await db.queryOne('SELECT 1 FROM employee_status_history WHERE employee_id=$1 AND owner_id=$2 LIMIT 1', [req.params.id, req.user.id]);
+    if (!hasHistory) {
+      const startDate = old.join_date || changedDate;
+      await db.query(
+        'INSERT INTO employee_status_history(employee_id,status,change_type,position,hourly_rate,changed_date,note,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+        [req.params.id, 'active', '入职', old.position || '', old.hourly_rate || 0, startDate, '系统自动补全入职状态', req.user.id]
+      );
+    }
+
+    await db.query('UPDATE employees SET status=$1, leave_date=$2 WHERE id=$3 AND owner_id=$4',
+      [status, newLeave, req.params.id, req.user.id]);
+    await db.query(
+      'INSERT INTO employee_status_history(employee_id,status,change_type,position,hourly_rate,changed_date,note,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+      [req.params.id, status, changeType, status === 'left' ? '' : snapPos, status === 'left' ? 0 : snapRate, changedDate, note || '', req.user.id]
+    );
     ok(res, { success: true });
   } catch (e) { fail400(res, e.message); }
 });
@@ -408,22 +617,6 @@ router.post('/init/sample', async (req, res) => {
     // 重新生成完整示例
     await db.seedForUser(uid, 'full');
     ok(res, { success: true, message: '示例数据已重置' });
-  } catch (e) { fail400(res, e.message); }
-});
-
-/* TEMP DEBUG — 诊断张三(id=1)归属并尝修复 */
-router.get('/_debug/diag', async (req, res) => {
-  try {
-    const admin = await db.queryOne("SELECT id FROM users WHERE username='admin'");
-    const c1 = await db.queryAll('SELECT id, owner_id, name FROM customers WHERE id=1');
-    const users = await db.queryAll('SELECT id, username FROM users ORDER BY id');
-    let affected = 'n/a';
-    try {
-      await db.query('UPDATE customers SET owner_id=$1 WHERE id=$2 AND owner_id<>$1', [admin.id, 1]);
-      affected = 'done';
-    } catch (e) { affected = 'err:' + e.message; }
-    const c1after = await db.queryAll('SELECT id, owner_id, name FROM customers WHERE id=1');
-    ok(res, { admin_id: admin ? admin.id : null, c1_before: c1, users, update: affected, c1_after: c1after });
   } catch (e) { fail400(res, e.message); }
 });
 

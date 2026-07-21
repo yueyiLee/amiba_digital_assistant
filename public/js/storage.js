@@ -6,14 +6,16 @@ const Storage = (() => {
   let cached = {
     transactions: [], customers: [], products: [], inventory: [],
     employees: [], workHours: [], contracts: [], settings: {},
-    categories: [], users: [], expenseItems: []
+    categories: [], users: [], expenseItems: [], expenseTypes: [],
+    employeeStatusHistory: []
   };
 
   // 全量加载（Promise.all 并发）
   async function refreshCache() {
     const [
       transactions, customers, products, inventory,
-      employees, workHours, contracts, settings, categories, users, expenseItems
+      employees, workHours, contracts, settings, categories, users, expenseItems, expenseTypes,
+      employeeStatusHistory
     ] = await Promise.all([
       API.get('/transactions'),
       API.get('/customers'),
@@ -24,10 +26,12 @@ const Storage = (() => {
       API.get('/contracts'),
       API.get('/settings'),
       API.get('/categories'),
-      API.get('/users').catch(() => []),  // 非 admin 可能无权限
-      API.get('/expense-items').catch(() => [])
+      API.get('/users').catch(() => []),
+      API.get('/expense-items').catch(() => []),
+      API.get('/expense-types').catch(() => []),
+      API.get('/employee-status-history-all').catch(() => [])
     ]);
-    cached = { transactions, customers, products, inventory, employees, workHours, contracts, settings, categories, users, expenseItems };
+    cached = { transactions, customers, products, inventory, employees, workHours, contracts, settings, categories, users, expenseItems, expenseTypes, employeeStatusHistory };
     return cached;
   }
 
@@ -43,6 +47,11 @@ const Storage = (() => {
   }
 
   function getEmployeesSync() { return cached.employees.slice(); }
+  function getEmployeeStatusHistorySync(employeeId) {
+    let list = cached.employeeStatusHistory.slice();
+    if (employeeId != null) list = list.filter(h => h.employee_id === employeeId);
+    return list;
+  }
   function getWorkHoursSync(month) {
     let list = cached.workHours.slice();
     if (month) list = list.filter(w => w.month === month);
@@ -57,7 +66,14 @@ const Storage = (() => {
   function getUsersSync() { return cached.users.slice(); }
   // 支出项预设下拉（按 kind 过滤：'processing' 委托加工 | 'misc' 杂费）
   function getExpenseItemsSync(kind) {
-    return cached.expenseItems.filter(e => e.kind === kind).map(e => ({ id: e.id, name: e.name }));
+    return cached.expenseItems.filter(e => e.kind === kind).map(e => ({ id: e.id, name: e.name, note: e.note || '' }));
+  }
+  // 收支类型（费用类型）配置：可按方向、是否仅启用过滤
+  function getExpenseTypesSync(direction, opts) {
+    let list = cached.expenseTypes.slice();
+    if (direction) list = list.filter(t => t.direction === direction);
+    if (opts && opts.enabledOnly) list = list.filter(t => t.enabled);
+    return list;
   }
 
   // ---- 选项下拉数据 ----
@@ -76,11 +92,12 @@ const Storage = (() => {
 
   return {
     refreshCache,
-    getTransactionsSync, getEmployeesSync, getWorkHoursSync,
+    getTransactionsSync, getEmployeesSync, getEmployeeStatusHistorySync, getWorkHoursSync,
     getCustomersSync, getProductsSync, getInventorySync, getContractsSync,
     getSettingsSync, getCategoriesSync, getUsersSync,
     getCustomerOptions, getProductOptions, getUnitList, getActiveUnits,
     getExpenseItemsSync,
+    getExpenseTypesSync,
     _cached: () => cached
   };
 })();

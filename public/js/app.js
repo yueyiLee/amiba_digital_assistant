@@ -3,7 +3,28 @@
  * 页面路由切换、初始化流程、Modal 管理、Toast 通知。
  */
 const App = (() => {
-  let currentPage = 'dashboard';
+  let currentKey = 'dashboard';
+
+  // 二级页面 key → 渲染动作（复用各模块细粒度渲染函数）
+  const ROUTES = {
+    'dashboard':      () => { Dashboard.renderUnitFilter(); Dashboard.render(); },
+    'entry-add':      () => { Entry.renderAdd(); },
+    'entry-query':    () => { Entry.renderQuery(); },
+    'customer-add':   () => { Business.renderCustomerAdd(); },
+    'customer-query': () => { Business.renderCustomerQuery(); },
+    'product-add':    () => { Business.renderProductAdd(); },
+    'product-query':  () => { Business.renderProductQuery(); },
+    'contract':       () => { Business.renderContract(); },
+    'inventory':      () => { Business.renderInventoryQuery(); },
+    'emp-roster':     () => { Employees.renderRoster(); },
+    'emp-history':    () => { Employees.renderHistory(); },
+    'emp-hours':      () => { Employees.renderHours(); },
+    'set-dept':       () => { Settings.renderDept(); },
+    'set-display':    () => { Settings.renderDisplay(); },
+    'set-misc':       () => { Business.renderExpenseItems(); },
+    'set-types':      () => { Business.renderExpenseTypes(); },
+    'users':          () => { Users.render(); }
+  };
 
   // ========== 初始化 ==========
   async function init() {
@@ -22,13 +43,10 @@ const App = (() => {
     await Storage.refreshCache();
     // 获取实时汇率
     await Currency.fetchRates();
-    // 同步设置页币种到看板切换器
+    // 同步设置页币种
     const savedCur = Storage.getSettingsSync().currency || '¥';
     const curCode = savedCur === '$' ? 'USD' : (savedCur === '€' ? 'EUR' : 'CNY');
     Currency.setDisplayCurrency(curCode);
-    const dashCurSel = document.getElementById('dashboardCurrency');
-    if (dashCurSel) dashCurSel.value = curCode;
-    // 同步设置页下拉
     const setCurSel = document.getElementById('setCurrency');
     if (setCurSel) setCurSel.value = savedCur;
     // 绑定事件
@@ -39,59 +57,63 @@ const App = (() => {
     Employees.bind();
     Settings.bind();
     Auth.bindLogin();
+    // 权限控制：非 admin 超级账号隐藏「账号管理」入口
+    const isAdmin = Auth.isAdmin();
+    document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? 'flex' : 'none'; });
     // 默认显示看板
     switchPage('dashboard');
   }
 
   // ========== 页面路由 ==========
-  function switchPage(page) {
-    // 权限校验：用户管理仅 admin
-    if (page === 'users' && !Auth.isAdmin()) {
-      toast('权限不足，仅管理员可访问用户管理', 'error');
+  function switchPage(key) {
+    if (!ROUTES[key]) return;
+    // 「账号管理」仅 admin 超级账号可访问
+    if (key === 'users' && !Auth.isAdmin()) {
+      toast('权限不足，仅系统管理员可访问账号管理', 'error');
       return;
     }
-    currentPage = page;
-    // 切换导航高亮
-    document.querySelectorAll('.nav-tab').forEach(t => {
-      t.classList.toggle('active', t.dataset.page === page);
-    });
+    currentKey = key;
+    // 切换导航高亮（清除旧的，激活当前 key 项并展开其所属分组）
+    document.querySelectorAll('#sidebarNav .nav-item, #sidebarNav .nav-sub').forEach(el => el.classList.remove('active'));
+    const target = document.querySelector(`#sidebarNav [data-key="${key}"]`);
+    if (target) {
+      target.classList.add('active');
+      const group = target.closest('.nav-group.has-sub');
+      if (group) group.classList.add('open');
+    }
     // 切换页面显示
     document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
-    const section = document.getElementById('page-' + page);
+    const section = document.getElementById('page-' + key);
     if (section) section.classList.add('active');
-
-    // 渲染对应页面
-    refreshPage(page);
-  }
-
-  function refreshPage(page) {
-    switch (page) {
-      case 'dashboard':
-        Dashboard.renderUnitFilter();
-        Dashboard.render();
-        break;
-      case 'entry': Entry.render(); break;
-      case 'business': Business.render(); break;
-      case 'employees': Employees.render(); break;
-      case 'settings': Settings.render(); break;
-      case 'users': Users.render(); break;
+    // 更新顶栏标题
+    const titleEl = document.getElementById('topbarTitle');
+    if (titleEl && target) {
+      const isSub = target.classList.contains('nav-sub');
+      const title = isSub
+        ? target.textContent.replace('•', '').trim()
+        : (target.querySelector('.ni-label') ? target.querySelector('.ni-label').textContent : key);
+      titleEl.textContent = title;
     }
+    // 渲染对应页面
+    ROUTES[key]();
   }
 
   function refreshAll() {
-    Dashboard.renderUnitFilter();
-    Dashboard.render();
-    Entry.render();
-    Business.render();
-    Employees.render();
-    Settings.render();
-    if (Auth.isAdmin()) Users.render();
+    if (ROUTES[currentKey]) ROUTES[currentKey]();
   }
 
   // ========== 导航绑定 ==========
   function bindNav() {
-    document.querySelectorAll('.nav-tab').forEach(tab => {
-      tab.addEventListener('click', () => switchPage(tab.dataset.page));
+    // 可点击菜单项（二级项与无子级的一级项均带 data-key）
+    document.querySelectorAll('#sidebarNav [data-key]').forEach(el => {
+      el.addEventListener('click', () => switchPage(el.dataset.key));
+    });
+    // 带子级的一级项：点击仅展开/收起二级菜单
+    document.querySelectorAll('#sidebarNav [data-toggle="sub"]').forEach(el => {
+      el.addEventListener('click', () => {
+        const group = el.closest('.nav-group.has-sub');
+        if (group) group.classList.toggle('open');
+      });
     });
   }
 
@@ -134,8 +156,8 @@ const App = (() => {
     setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateX(100%)'; setTimeout(() => el.remove(), 300); }, 3000);
   }
 
-  return { init, switchPage, refreshPage, refreshAll, openModal, closeModal, toast,
-           get currentPage() { return currentPage; } };
+  return { init, switchPage, refreshAll, openModal, closeModal, toast,
+           get currentPage() { return currentKey; } };
 })();
 
 // ========== 启动 ==========

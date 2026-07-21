@@ -1,29 +1,23 @@
 /**
- * users.js — 用户管理页面（PRD 新增功能）
- * 用户列表 + 添加/编辑/删除用户 + 重置密码 + 角色管理。
- * 仅 admin 角色可访问。
+ * users.js — 用户管理页面
+ * 用户列表 + 添加/编辑/删除用户 + 重置密码。
+ * 所有账号默认管理员权限，不再区分角色。
  */
 const Users = (() => {
 
   function render() {
     const list = Storage.getUsersSync();
     document.getElementById('userCount').textContent = list.length;
-    document.getElementById('userAdminCount').textContent = list.filter(u => u.role === 'admin').length;
-    document.getElementById('userEditorCount').textContent = list.filter(u => u.role === 'editor').length;
-    document.getElementById('userViewerCount').textContent = list.filter(u => u.role === 'viewer').length;
 
     const tbl = document.getElementById('userTable');
-    if (list.length === 0) { tbl.innerHTML = '<tr><td colspan="6" class="empty-state">暂无用户</td></tr>'; return; }
-    const roleMap = { admin: ['管理员', 'r'], editor: ['录入员', 'b'], viewer: ['查看者', 'gray'] };
+    if (list.length === 0) { tbl.innerHTML = '<tr><td colspan="4" class="empty-state">暂无用户</td></tr>'; return; }
     const me = Auth.getUser();
-    tbl.innerHTML = `<thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>创建时间</th><th>操作</th></tr></thead>
+    tbl.innerHTML = `<thead><tr><th>用户名</th><th>显示名</th><th>创建时间</th><th>操作</th></tr></thead>
       <tbody>${list.map(u => {
-        const [rName, rCls] = roleMap[u.role] || [u.role, 'gray'];
         const isMe = me && u.id === me.id;
         return `<tr>
           <td>${u.username}${isMe ? ' <span class="badge g">我</span>' : ''}</td>
           <td>${u.display_name}</td>
-          <td><span class="badge ${rCls}">${rName}</span></td>
           <td>${u.created_at ? u.created_at.replace('T', ' ').substring(0, 16) : '—'}</td>
           <td>
             <button class="btn btn-secondary btn-sm" onclick="Users.openEditModal(${u.id})">编辑</button>
@@ -38,21 +32,12 @@ const Users = (() => {
     const body = `
       <div class="form-group"><label class="form-label">用户名 <span class="req">*</span></label><input type="text" class="form-input" id="m-username" placeholder="登录用户名"></div>
       <div class="form-group"><label class="form-label">密码 <span class="req">*</span></label><input type="password" class="form-input" id="m-password" placeholder="至少 6 位"></div>
-      <div class="form-group"><label class="form-label">显示名</label><input type="text" class="form-input" id="m-display_name" placeholder="用户昵称"></div>
-      <div class="form-group"><label class="form-label">角色 <span class="req">*</span></label>
-        <select class="form-select" id="m-role">
-          <option value="viewer">查看者 — 只能查看数据</option>
-          <option value="editor">录入员 — 可录入和编辑业务数据</option>
-          <option value="admin">管理员 — 全部权限（含用户管理）</option>
-        </select>
-      </div>
-      <div class="info-tip"><span class="ic">ℹ️</span><div>角色说明：管理员可管理用户账号；录入员可录入收支与业务数据；查看者仅可查看看板与列表。</div></div>`;
+      <div class="form-group"><label class="form-label">显示名</label><input type="text" class="form-input" id="m-display_name" placeholder="用户昵称"></div>`;
     App.openModal('添加用户', body, async () => {
       const data = {
         username: document.getElementById('m-username').value.trim(),
         password: document.getElementById('m-password').value,
-        display_name: document.getElementById('m-display_name').value.trim(),
-        role: document.getElementById('m-role').value
+        display_name: document.getElementById('m-display_name').value.trim()
       };
       if (!data.username) return App.toast('用户名必填', 'error');
       if (!data.password || data.password.length < 6) return App.toast('密码至少 6 位', 'error');
@@ -72,18 +57,10 @@ const Users = (() => {
     if (!u) return;
     const body = `
       <div class="form-group"><label class="form-label">用户名</label><input type="text" class="form-input" value="${u.username}" disabled></div>
-      <div class="form-group"><label class="form-label">显示名</label><input type="text" class="form-input" id="m-display_name" value="${u.display_name}"></div>
-      <div class="form-group"><label class="form-label">角色</label>
-        <select class="form-select" id="m-role">
-          <option value="viewer" ${u.role === 'viewer' ? 'selected' : ''}>查看者 — 只能查看数据</option>
-          <option value="editor" ${u.role === 'editor' ? 'selected' : ''}>录入员 — 可录入和编辑业务数据</option>
-          <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>管理员 — 全部权限（含用户管理）</option>
-        </select>
-      </div>`;
+      <div class="form-group"><label class="form-label">显示名</label><input type="text" class="form-input" id="m-display_name" value="${u.display_name}"></div>`;
     App.openModal('编辑用户', body, async () => {
       const data = {
-        display_name: document.getElementById('m-display_name').value.trim(),
-        role: document.getElementById('m-role').value
+        display_name: document.getElementById('m-display_name').value.trim()
       };
       try {
         await API.put('/users/' + id, data);

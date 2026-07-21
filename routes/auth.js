@@ -25,7 +25,7 @@ router.post('/login', async (req, res) => {
     const token = signToken(user);
     res.json({
       token,
-      user: { id: user.id, username: user.username, display_name: user.display_name, role: user.role }
+      user: { id: user.id, username: user.username, display_name: user.display_name, role: 'admin' }
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

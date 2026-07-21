@@ -68,6 +68,9 @@ body {
 .metric-grid.row2 { grid-template-columns: repeat(2, 1fr); }
 .metric-grid.row3 { grid-template-columns: repeat(3, 1fr); }
 .metric-grid.row4 { grid-template-columns: repeat(4, 1fr); }
+.metric-grid.row5 { grid-template-columns: repeat(5, 1fr); }
+.metric-grid.row6 { grid-template-columns: repeat(6, 1fr); }
+.metric-grid.row7 { grid-template-columns: repeat(7, 1fr); }
 .metric-card {
   background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; position: relative;
 }
@@ -110,6 +113,7 @@ body {
 .chart-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; }
 .chart-card .c-title { font-size: 14px; font-weight: 600; color: #334155; margin-bottom: 8px; }
 .chart-unit-hint { font-size: 11px; font-weight: 400; color: #94a3b8; margin-left: 4px; }
+.trend-range-label { font-size: 12px; color: #64748b; text-align: center; margin-top: 8px; padding-top: 6px; border-top: 1px dashed #e2e8f0; }
 
 /* ========== 表单 ========== */
 .form-group { margin-bottom: 14px; }
@@ -165,7 +169,8 @@ body {
 .record-item .r-amt { font-weight: 700; font-size: 15px; }
 .record-item .r-amt.pos { color: #059669; }
 .record-item .r-amt.neg { color: #dc2626; }
-.record-item .r-del { margin-left: 8px; }
+.record-item .r-edit { margin-left: 8px; }
+.record-item .r-del { margin-left: 6px; }
 
 /* 录入页右侧：记录筛选栏 + 分页 */
 .rec-filters { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
@@ -200,6 +205,32 @@ body {
 .setting-name { font-size: 15px; font-weight: 600; color: #0f172a; }
 .setting-desc { font-size: 12px; color: #64748b; margin-top: 2px; }
 .status-tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #dcfce7; color: #059669; margin-left: 6px; }
+.status-tag.status-active { background: #dcfce7; color: #059669; margin-left: 0; }
+.status-tag.status-left { background: #f1f1f3; color: #8a8f98; margin-left: 0; }
+/* 入离职记录 / 工时页状态标签 */
+.status-tag.status-onboard { background: #dcfce7; color: #059669; margin-left: 0; }
+.status-tag.status-reinstate { background: #e0efff; color: #2563eb; margin-left: 0; }
+.status-tag.status-dim { background: #f1f1f3; color: #8a8f98; margin-left: 0; }
+
+/* 员工档案：离职期间提示（解决"无法得知什么期间离职"） */
+.leave-hint { font-size: 11px; color: #ef6c4d; margin-top: 3px; line-height: 1.4; }
+
+/* 工时页：当月发生状态变更时的红字提示 */
+.month-change-hint { font-size: 11px; color: #e23d3d; margin-top: 3px; line-height: 1.35; }
+
+/* 离职员工在工时表中整行灰显、不可编辑 */
+.row-left td { color: #b3b8c2; }
+.row-left .form-input { background: #f6f7f9; color: #b3b8c2; cursor: not-allowed; }
+
+/* 分段筛选控件（全部/在职/离职） */
+.seg-group { display: inline-flex; border: 1px solid var(--color-border-secondary, #d8dde6); border-radius: 8px; overflow: hidden; }
+.seg-btn { border: none; background: #fff; padding: 6px 14px; font-size: 13px; color: #5f6b7a; cursor: pointer; }
+.seg-btn + .seg-btn { border-left: 1px solid var(--color-border-secondary, #d8dde6); }
+.seg-btn.active { background: #3b6d11; color: #fff; }
+
+/* 警告按钮（标记离职） */
+.btn-warning { border: 1px solid #e0a93b; background: #fff; color: #b9810f; }
+.btn-warning:hover { background: #fdf6e7; }
 .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .slider { position: absolute; cursor: pointer; inset: 0; background: #cbd5e1; border-radius: 24px; transition: 0.3s; }
@@ -243,6 +274,22 @@ input:checked + .slider:before { transform: translateX(20px); }
 .text-muted { color: #64748b; }
 .empty-state { text-align: center; padding: 32px; color: #94a3b8; font-size: 14px; }
 
+/* ========== 看板时间段标签 & 导出按钮 ========== */
+.range-label {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 13px; color: #475569; background: #f1f5f9; border: 1px solid #e2e8f0;
+  border-radius: 6px; padding: 4px 10px; white-space: nowrap; height: 32px; line-height: 1;
+}
+.range-label::before { content: "📅"; }
+.btn-export {
+  background: #2563eb; color: #fff; border: 1px solid #2563eb; box-shadow: 0 1px 2px rgba(37,99,235,0.2);
+}
+.btn-export:hover { background: #1d4ed8; border-color: #1d4ed8; }
+.btn-export::before { content: "⬇"; margin-right: 3px; }
+
+/* ========== 杂费类别备注 ========== */
+.misc-note { color: #64748b; font-size: 13px; line-height: 1.5; max-width: 320px; }
+
 /* ========== 汇率信息栏 ========== */
 .rate-info-bar {
   background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px;
@@ -270,25 +317,152 @@ input:checked + .slider:before { transform: translateX(20px); }
 .cb-option:hover { background: #f1f5f9; }
 .cb-option.selected { background: #eff6ff; color: #2563eb; font-weight: 500; }
 .cb-empty { padding: 10px 12px; font-size: 13px; color: #94a3b8; }
+.dup-hint { margin-top: 6px; font-size: 12px; color: #dc2626; min-height: 17px; }
+.cb-option .tag { float: right; font-size: 11px; color: #fff; background: #10b981; padding: 1px 6px; border-radius: 4px; }
+.cb-option.disabled { color: #94a3b8; cursor: not-allowed; background: #f8fafc; }
+.cb-option.disabled .tag { background: #94a3b8; }
 
 /* ========== 库存时间 / 看板库存模块 ========== */
 .inv-time { color: #94a3b8; font-size: 12px; white-space: nowrap; }
-.dash-module { margin-top: 18px; }
-.dash-module .module-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+/* 看板各模块统一为卡片式外框，彼此并列、风格一致 */
+.dash-module {
+  margin-top: 18px; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+  padding: 16px 18px; box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+}
+.dash-module .module-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .dash-module .module-title { font-size: 16px; font-weight: 600; color: #0f172a; }
 .dash-module .module-sub { font-size: 12px; color: #94a3b8; }
+
+/* 核心指标模块：强调色 */
+.core-module { background: linear-gradient(180deg,#fbfaff 0%, #ffffff 60%); border-color: #c7d2fe; box-shadow: 0 2px 10px rgba(99,102,241,0.10); }
+.core-module .module-title { color: #4338ca; }
+
+/* 日常经营指标分组（收入类 / 支出类） */
+.sub-group { margin-bottom: 14px; }
+.sub-group:last-child { margin-bottom: 0; }
+.sub-label {
+  font-size: 12.5px; font-weight: 600; margin-bottom: 8px; display: inline-flex; align-items: center; gap: 6px;
+  padding-left: 9px; position: relative;
+}
+.sub-label::before { content: ''; position: absolute; left: 0; top: 1px; bottom: 1px; width: 3px; border-radius: 2px; }
+.sub-label.income-label { color: #059669; }
+.sub-label.income-label::before { background: #059669; }
+.sub-label.expense-label { color: #dc2626; }
+.sub-label.expense-label::before { background: #dc2626; }
+
+/* 员工工资模块 + 阿米巴理念说明框 */
+.wage-module { border-color: #fcd34d; }
+.wage-note {
+  display: flex; gap: 10px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;
+  padding: 10px 12px; font-size: 12.5px; color: #92400e; line-height: 1.6; margin-bottom: 14px;
+}
+.wage-note .wn-ic { font-size: 16px; flex-shrink: 0; line-height: 1.5; }
+.wage-note b { color: #b45309; }
+
+/* 看板库存筛选条 */
+.inv-filter-bar { margin-bottom: 10px; }
 
 /* ========== 响应式 ========== */
 @media (max-width: 900px) {
   .two-col { grid-template-columns: 1fr; }
   .chart-grid { grid-template-columns: 1fr; }
-  .metric-grid.row3, .metric-grid.row4 { grid-template-columns: repeat(2, 1fr); }
+  .metric-grid.row3, .metric-grid.row4, .metric-grid.row5, .metric-grid.row6, .metric-grid.row7 { grid-template-columns: repeat(3, 1fr); }
   .app-nav { overflow-x: auto; }
   .nav-tab { padding: 6px 10px; }
   .user-name, .user-role { display: none; }
 }
 @media (max-width: 600px) {
-  .metric-grid.row3, .metric-grid.row4 { grid-template-columns: 1fr; }
+  .metric-grid.row3, .metric-grid.row4, .metric-grid.row5, .metric-grid.row6, .metric-grid.row7 { grid-template-columns: 1fr; }
   .app-main { padding: 16px 12px 40px; }
   .app-logo span { display: none; }
+}
+
+/* ========== 主应用框架：左侧竖排导航 + 右侧内容 ========== */
+.app-page { display: flex; min-height: 100vh; }
+
+/* 侧边栏 */
+.sidebar {
+  width: 220px; flex-shrink: 0; background: #0f172a; color: #cbd5e1;
+  display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh;
+  overflow-y: auto;
+}
+.sidebar-brand {
+  display: flex; align-items: center; gap: 8px; padding: 16px 18px;
+  font-size: 15px; font-weight: 700; color: #fff; border-bottom: 1px solid #1e293b;
+  white-space: nowrap;
+}
+.sidebar-brand .sb-logo {
+  width: 28px; height: 28px; border-radius: 6px;
+  object-fit: cover;
+  display: block; flex-shrink: 0; background: #fff;
+}
+.sidebar-nav { padding: 8px; flex: 1; }
+
+.nav-item {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px;
+  cursor: pointer; color: #cbd5e1; font-size: 14px; user-select: none; margin-bottom: 2px;
+  transition: background .15s, color .15s;
+}
+.nav-item:hover { background: #1e293b; color: #fff; }
+.nav-item.active { background: #2563eb; color: #fff; font-weight: 600; }
+.nav-item .ni-ic { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+.nav-item .ni-label { flex: 1; }
+.nav-item .ni-caret { font-size: 11px; color: #94a3b8; transition: transform .2s; }
+.nav-group.has-sub.open > .nav-item .ni-caret { transform: rotate(90deg); }
+.nav-group.has-sub.open > .nav-item { color: #fff; }
+
+/* 默认隐藏 admin-only 入口，由 JS 根据当前用户权限显式展开 */
+.admin-only { display: none; }
+
+.sub-list { display: none; padding: 2px 0 4px 30px; }
+.nav-group.has-sub.open > .sub-list { display: block; }
+.nav-sub {
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 6px;
+  cursor: pointer; font-size: 13px; color: #94a3b8; transition: background .15s, color .15s;
+}
+.nav-sub:hover { background: #1e293b; color: #e2e8f0; }
+.nav-sub.active { background: #1e3a8a; color: #fff; font-weight: 600; }
+.nav-sub .ni-dot { color: #475569; font-size: 12px; }
+.nav-sub.active .ni-dot { color: #93c5fd; }
+
+/* 内容区 */
+.content { flex: 1; min-width: 0; display: flex; flex-direction: column; background: #f1f5f9; }
+.topbar {
+  position: sticky; top: 0; z-index: 90; display: flex; align-items: center; justify-content: space-between;
+  height: 56px; padding: 0 24px; background: #fff; border-bottom: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.topbar-title { font-size: 16px; font-weight: 700; color: #0f172a; }
+.user-menu { display: flex; align-items: center; gap: 10px; }
+.user-name { font-size: 13px; color: #334155; font-weight: 500; }
+.user-role { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #eff6ff; color: #2563eb; }
+.app-main { flex: 1; width: 100%; max-width: 1300px; margin: 0 auto; padding: 24px 24px 60px; }
+
+/* 查询筛选工具栏（各数据页顶部） */
+.query-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; margin-bottom: 14px;
+}
+.query-toolbar .q-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; }
+.query-toolbar .q-label { font-size: 13px; color: #475569; font-weight: 500; white-space: nowrap; }
+.query-toolbar .form-input, .query-toolbar .form-select { width: auto; }
+.query-toolbar .q-type-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.type-chip { display: inline-flex; align-items: center; cursor: pointer; border-radius: 999px; border: 1px solid #cbd5e1; background: #fff; padding: 4px 10px; font-size: 13px; color: #334155; transition: all .15s; }
+.type-chip:hover { border-color: #3b82f6; }
+.type-chip input { display: none; }
+.type-chip span { pointer-events: none; }
+.type-chip:has(input:checked) { background: #eff6ff; border-color: #3b82f6; color: #1d4ed8; }
+
+/* 收支类型管理页：状态徽标与行内勾选 */
+.badge-ok { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 12px; background: #dcfce7; color: #059669; }
+.badge-off { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 12px; background: #f1f5f9; color: #64748b; }
+.chk { display: inline-flex; align-items: center; gap: 4px; margin-right: 14px; font-size: 14px; color: #334155; cursor: pointer; }
+
+/* 窄屏：侧边栏收窄，保持可用 */
+@media (max-width: 768px) {
+  .sidebar { width: 180px; }
+  .sidebar-brand { font-size: 14px; padding: 14px 12px; }
+  .nav-item { padding: 9px 10px; font-size: 13px; }
+  .topbar { padding: 0 14px; }
+  .app-main { padding: 16px 14px 48px; }
 }

@@ -4,24 +4,44 @@
  */
 const Dashboard = (() => {
   let chartTrend = null, chartExpense = null, chartIncome = null;
+  let invFilter = ''; // 看板库存按商品名称筛选
+
+  // 复合式时间筛选 → 统一范围。便捷段或自定义月份，最小单位均为月份。
+  function getRange() {
+    const quick = document.getElementById('dashboardPeriodFilter').value || 'month';
+    if (quick === 'custom') {
+      return Calculator.resolveRange({
+        quick: 'custom',
+        startMonth: document.getElementById('dashboardStartMonth').value,
+        endMonth: document.getElementById('dashboardEndMonth').value
+      });
+    }
+    return Calculator.resolveRange({ quick });
+  }
 
   function render() {
+    const quick = document.getElementById('dashboardPeriodFilter').value || 'month';
+    document.getElementById('customRangeWrap').style.display = quick === 'custom' ? 'inline-flex' : 'none';
     const unitFilter = document.getElementById('dashboardUnitFilter').value || '全部单元';
-    const period = document.getElementById('dashboardPeriodFilter').value || 'month';
-    const m = Calculator.calculateMetrics(unitFilter, period);
+    const range = getRange();
+    document.getElementById('trendRangeLabel').textContent = '当前选择：' + range.label;
+    const m = Calculator.calculateMetrics(unitFilter, range);
 
     // 基础层（金额经汇率折算）
     document.getElementById('m-sales').textContent = Calculator.fmtMoney(m.salesIncome);
     document.getElementById('m-cash').textContent = Calculator.fmtMoney(m.cashIncome);
     document.getElementById('m-total-income').textContent = Calculator.fmtMoney(m.totalIncome);
+    document.getElementById('m-receivable').textContent = Calculator.fmtMoney(m.receivable);
     document.getElementById('m-material').textContent = Calculator.fmtMoney(m.materialCost);
     document.getElementById('m-process').textContent = Calculator.fmtMoney(m.processCost);
-    document.getElementById('m-consume').textContent = Calculator.fmtMoney(m.consumeCost);
     document.getElementById('m-misc').textContent = Calculator.fmtMoney(m.miscCost);
 
     // 核心层
     document.getElementById('m-added').textContent = Calculator.fmtMoney(m.addedValue);
     document.getElementById('m-tax').textContent = Calculator.fmtMoney(m.taxCost);
+    document.getElementById('m-total-expense').textContent = Calculator.fmtMoney(m.totalExpense);
+    document.getElementById('m-cash-expense').textContent = Calculator.fmtMoney(m.cashExpense);
+    document.getElementById('m-payable').textContent = Calculator.fmtMoney(m.payable);
 
     // 成果层
     const profitEl = document.getElementById('m-profit');
@@ -37,7 +57,7 @@ const Dashboard = (() => {
     document.getElementById('m-unit-profit').textContent = Calculator.fmtRate(m.unitProfit);
 
     renderRateInfo();
-    renderCharts(unitFilter, period);
+    renderCharts(unitFilter, range);
     renderInventoryOverview();
   }
 
@@ -63,15 +83,13 @@ const Dashboard = (() => {
       .map(u => `<option ${u === cur ? 'selected' : ''}>${u}</option>`).join('');
   }
 
-  function renderCharts(unitFilter, period) {
-    const { start, end, label } = Calculator.periodRange(period);
+  function renderCharts(unitFilter, range) {
+    const { start, end, label, granularity } = range;
     // 统一按所选时间段过滤（修复原先指标卡只看当月、图表却看全量的口径不一致）
     const txs = Storage.getTransactionsSync({ unit: unitFilter, startDate: start, endDate: end });
 
-    // 收支趋势（按所选时间段聚合：本月/本季按日，本年/全部按月）
-    const { labels, incomeArr, expenseArr } = buildTrend(period, start, end, txs);
-    const trendTitle = document.getElementById('trendTitle');
-    if (trendTitle) trendTitle.firstChild.textContent = `${label}收支趋势 `;
+    // 收支趋势（按粒度聚合：单月/季度/具体月按日，整年/全部按月）
+    const { labels, incomeArr, expenseArr } = buildTrend(granularity, start, end, txs);
 
     const ctxT = document.getElementById('chartTrend');
     if (chartTrend) chartTrend.destroy();
@@ -155,16 +173,20 @@ const Dashboard = (() => {
     });
   }
 
-  // 按所选时间段构建趋势图数据：本月/本季→按日；本年/全部→按月
-  function buildTrend(period, start, end, txs) {
+  // 按粒度构建趋势图数据：'month'→按月聚合；'day'→按日聚合
+  function buildTrend(granularity, start, end, txs) {
     const incomeMap = {}, expenseMap = {};
     let keys = [], labels = [];
-    if (period === 'year' || period === 'all' || !period) {
+    if (granularity === 'month') {
       let months = [];
-      if (period === 'year') {
-        const y = new Date().getFullYear();
-        for (let i = 1; i <= 12; i++) months.push(`${y}-${String(i).padStart(2, '0')}`);
+      if (start && end) {
+        // 指定年份/整年：铺满起止区间内的每个自然月
+        const s = new Date(start), e = new Date(end);
+        for (let d = new Date(s.getFullYear(), s.getMonth(), 1); d <= e; d.setMonth(d.getMonth() + 1)) {
+          months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+        }
       } else {
+        // 全部时间：取数据中出现过的月份
         const set = new Set(txs.map(t => (t.date || '').slice(0, 7)).filter(Boolean));
         months = Array.from(set).sort();
       }
@@ -180,7 +202,7 @@ const Dashboard = (() => {
     } else {
       const s = new Date(start), e = new Date(end);
       for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-        const key = d.toISOString().slice(0, 10);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         keys.push(key); labels.push(key.slice(5));
         incomeMap[key] = 0; expenseMap[key] = 0;
       }
@@ -195,15 +217,18 @@ const Dashboard = (() => {
 
   // 库存总览：与经营数据并列，辅助经营者对照判断
   function renderInventoryOverview() {
-    const list = Storage.getInventorySync();
-    document.getElementById('dashInvCount').textContent = list.length;
-    const totalValue = list.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.avg_price) || 0), 0);
+    const all = Storage.getInventorySync();
+    const kw = (invFilter || '').trim().toLowerCase();
+    const list = kw ? all.filter(i => (i.product_name || '').toLowerCase().includes(kw)) : all;
+    // 概览卡片始终反映全部库存；筛选仅作用于下方表格，便于经营者快速定位商品
+    document.getElementById('dashInvCount').textContent = all.length;
+    const totalValue = all.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.avg_price) || 0), 0);
     document.getElementById('dashInvValue').textContent = Calculator.fmtMoney(totalValue);
-    const zero = list.filter(i => !(Number(i.quantity) > 0)).length;
+    const zero = all.filter(i => !(Number(i.quantity) > 0)).length;
     document.getElementById('dashInvZero').textContent = zero;
 
     const tbl = document.getElementById('dashInventoryTable');
-    if (list.length === 0) { tbl.innerHTML = '<tr><td colspan="6" class="empty-state">暂无库存数据</td></tr>'; return; }
+    if (list.length === 0) { tbl.innerHTML = '<tr><td colspan="6" class="empty-state">暂无匹配的库存数据</td></tr>'; return; }
     tbl.innerHTML = `<thead><tr><th>商品名称</th><th>分类</th><th>库存数量</th><th>均价</th><th>库存价值</th><th>最后编辑</th></tr></thead>
       <tbody>${list.map(i => {
         const val = (Number(i.quantity) || 0) * (Number(i.avg_price) || 0);
@@ -225,11 +250,20 @@ const Dashboard = (() => {
   function bind() {
     document.getElementById('dashboardUnitFilter').addEventListener('change', render);
     document.getElementById('dashboardPeriodFilter').addEventListener('change', render);
-    document.getElementById('dashboardCurrency').addEventListener('change', async (e) => {
-      Currency.setDisplayCurrency(e.target.value);
-      // 切换币种后刷新所有页面
-      App.refreshAll();
-    });
+    document.getElementById('dashboardStartMonth').addEventListener('change', render);
+    document.getElementById('dashboardEndMonth').addEventListener('change', render);
+    // 看板库存按商品名称筛选：仅刷新库存表格，不重建图表
+    const invInput = document.getElementById('dashInvFilter');
+    if (invInput) invInput.addEventListener('input', (e) => { invFilter = e.target.value || ''; renderInventoryOverview(); });
+    // 自定义月份默认填值（上月 ~ 本月），便于直接选"自定义"即可用
+    const smEl = document.getElementById('dashboardStartMonth');
+    const emEl = document.getElementById('dashboardEndMonth');
+    if (smEl && !smEl.value) {
+      const now = new Date();
+      const lm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      smEl.value = `${lm.getFullYear()}-${String(lm.getMonth() + 1).padStart(2, '0')}`;
+      emEl.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
   }
 
   return { render, renderUnitFilter, bind };

@@ -30,8 +30,10 @@ const Auth = (() => {
 
   function getUser() { return currentUser; }
   function isLoggedIn() { return !!localStorage.getItem('amoeba_token'); }
-  function isAdmin() { return currentUser && currentUser.role === 'admin'; }
-  function canEdit() { return currentUser && (currentUser.role === 'admin' || currentUser.role === 'editor'); }
+  // 仅 admin 超级账号是平台管理员（可管理所有租户账号）；判断依据为用户名，稳定可靠
+  function isAdmin() { return !!currentUser && currentUser.username === 'admin'; }
+  // 业务数据层面：每个账号对自己隔离的数据均拥有全部编辑权限
+  function canEdit() { return true; }
 
   async function changePassword(oldPassword, newPassword) {
     return API.put('/auth/password', { oldPassword, newPassword });
@@ -45,16 +47,14 @@ const Auth = (() => {
 
   function showApp() {
     document.getElementById('loginPage').style.display = 'none';
-    document.getElementById('appPage').style.display = 'block';
+    document.getElementById('appPage').style.display = 'flex';
     // 渲染用户信息
     const u = currentUser;
     document.getElementById('userDisplayName').textContent = u.display_name || u.username;
-    const roleMap = { admin: '管理员', editor: '录入员', viewer: '查看者' };
-    document.getElementById('userRoleTag').textContent = roleMap[u.role] || u.role;
-    // 权限控制：仅 admin 显示用户管理
-    document.querySelectorAll('.admin-only').forEach(el => {
-      el.style.display = isAdmin() ? '' : 'none';
-    });
+    // admin 为平台系统管理员；其他账号在自己数据范围内为管理员
+    document.getElementById('userRoleTag').textContent = isAdmin() ? '系统管理员' : '管理员';
+    // 「账号管理」仅对 admin 超级账号可见（默认由 CSS 隐藏，此处显式展开）
+    document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin() ? 'flex' : 'none'; });
   }
 
   // ---- 绑定登录表单 ----

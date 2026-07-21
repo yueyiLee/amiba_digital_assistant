@@ -5,26 +5,17 @@
 const Entry = (() => {
   let direction = 'expense'; // expense / income
 
-  const TYPE_MAP = {
-    expense: ['材料采购', '委托加工', '杂费支出', '税金'],
-    income: ['销售收入', '现金收入', '其他收入']
-  };
-
-  // 支出类型 → 表单项联动配置
-  // customer/product：是否显示客户/商品；cat：显示哪个支出项细分下拉（'processing' 委托加工 | 'misc' 杂费）
-  const EXPENSE_LINKAGE = {
-    '材料采购': { customer: true, product: true, cat: null },
-    '委托加工': { customer: true, product: false, cat: 'processing' },
-    '杂费支出': { customer: false, product: false, cat: 'misc' },
-    '税金': { customer: true, product: true, cat: null }
-  };
+  // 联动规则来自后端 expense_types 配置（link_customer / link_product / link_cat）
+  function getLinkCfg(typeName, dir) {
+    const t = Storage.getExpenseTypesSync(dir, { enabledOnly: false }).find(x => x.name === typeName);
+    if (!t) return { customer: true, product: true, cat: null };
+    return { customer: !!t.link_customer, product: !!t.link_product, cat: t.link_cat || null };
+  }
 
   // 根据当前方向 + 交易类型，显示/隐藏 客户 / 商品 / 支出项细分 字段，并填充对应选项
   function applyTypeLinkage() {
     const type = document.getElementById('entryType').value;
-    const cfg = direction === 'income'
-      ? { customer: true, product: true, cat: null }
-      : (EXPENSE_LINKAGE[type] || { customer: true, product: true, cat: null });
+    const cfg = getLinkCfg(type, direction);
 
     const custGroup = document.getElementById('entryCustomerGroup');
     const prodGroup = document.getElementById('entryProductGroup');
@@ -58,7 +49,8 @@ const Entry = (() => {
     }
   }
 
-  function render() {
+  // 收支录入页：仅渲染录入表单（左半）
+  function renderAdd() {
     renderTypeOptions();
     applyTypeLinkage();
     renderUnitOptions();
@@ -66,13 +58,56 @@ const Entry = (() => {
     document.querySelector('.amount-wrap .cur').textContent = Calculator.getCurrency();
     // 默认日期为今天
     document.getElementById('entryDate').value = new Date().toISOString().slice(0, 10);
+  }
+
+  // 收支查询页：填充筛选下拉并渲染记录列表（右半）
+  function renderQuery() {
+    renderTypeOptionsForQuery();
     renderRecords();
   }
 
+  // 录入表单刷新（供其他模块新增客户/商品后同步下拉）
+  function render() { renderAdd(); }
+
   function renderTypeOptions() {
     const sel = document.getElementById('entryType');
-    sel.innerHTML = TYPE_MAP[direction].map(t => `<option>${t}</option>`).join('');
+    const types = Storage.getExpenseTypesSync(direction, { enabledOnly: true });
+    sel.innerHTML = types.length
+      ? types.map(t => `<option>${escapeHtml(t.name)}</option>`).join('')
+      : '<option value="">（暂无可用类型）</option>';
   }
+
+  // 收支查询页的"类型"多选 chips：根据当前方向显示对应类型，默认全选
+  function renderTypeChips() {
+    const container = document.getElementById('recTypeChips');
+    if (!container) return;
+    const types = Storage.getExpenseTypesSync(recFilters.dir || null, { enabledOnly: true });
+
+    // 若当前已选类型与当前方向有交集则保留，否则默认全选
+    const selected = (recFilters.type && recFilters.type.length > 0)
+      ? recFilters.type.filter(t => types.some(x => x.name === t))
+      : types.map(t => t.name);
+    recFilters.type = selected;
+
+    container.innerHTML = types.map(t => `
+      <label class="type-chip">
+        <input type="checkbox" value="${escapeHtml(t.name)}" ${selected.includes(t.name) ? 'checked' : ''}>
+        <span>${escapeHtml(t.name)}</span>
+      </label>
+    `).join('');
+
+    // 绑定多选事件
+    container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const vals = Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(c => c.value);
+        recFilters.type = vals;
+        recPage = 1;
+        renderRecords();
+      });
+    });
+  }
+
+  function renderTypeOptionsForQuery() { renderTypeChips(); }
 
   function renderUnitOptions() {
     const sel = document.getElementById('entryUnit');
@@ -147,10 +182,8 @@ const Entry = (() => {
     if (!amount || amount <= 0) return App.toast('金额必须为有效正数', 'error');
     if (!date) return App.toast('请选择日期', 'error');
 
-    // 支出项细分：委托加工→加工类别；杂费支出→杂费类别；其余类型无此字段
-    const linkCfg = direction === 'income'
-      ? { cat: null }
-      : (EXPENSE_LINKAGE[type] || { cat: null });
+    // 支出项细分：由后端类型配置决定（link_cat）
+    const linkCfg = getLinkCfg(type, direction);
     const category = linkCfg.cat
       ? (document.getElementById('entryExpenseCat').value || null)
       : null;
@@ -179,10 +212,11 @@ const Entry = (() => {
     }
   }
 
-  // 记录列表：筛选（类型 / 时间范围 / 关键词）+ 分页
+  // 记录列表：筛选（方向 / 类型 / 日期区间 / 客户 / 商品 / 金额范围）+ 分页
   let recPage = 1;
   const REC_PAGE_SIZE = 15;
-  const recFilters = { type: '', range: '', keyword: '' };
+  let lastQueryRows = [];
+  const recFilters = { dir: '', type: [], dateStart: '', dateEnd: '', customer: '', product: '', amtMin: '', amtMax: '' };
 
   function computeRangeDates(range) {
     if (!range) return { start: null, end: null };
@@ -204,24 +238,55 @@ const Entry = (() => {
     return { start: null, end: null };
   }
 
+  // 重置收支查询：清空所有筛选条件，展示全部记录
+  function resetFilters() {
+    recFilters.dir = '';
+    recFilters.type = [];
+    recFilters.dateStart = '';
+    recFilters.dateEnd = '';
+    recFilters.customer = '';
+    recFilters.product = '';
+    recFilters.amtMin = '';
+    recFilters.amtMax = '';
+    recPage = 1;
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    setVal('recDir', '');
+    setVal('recDateStart', '');
+    setVal('recDateEnd', '');
+    setVal('recCustomer', '');
+    setVal('recProduct', '');
+    setVal('recAmtMin', '');
+    setVal('recAmtMax', '');
+    renderTypeChips(); // 重置方向后重新生成类型 chips（全部类型全选）
+    renderRecords();
+  }
+
   function renderRecords() {
-    const { start, end } = computeRangeDates(recFilters.range);
-    // 1) 类型 + 时间范围交给 Storage 过滤（走后端语义）
+    const f = recFilters;
+    // 1) 类型 + 日期区间交给 Storage 过滤（走后端语义）
     let list = Storage.getTransactionsSync({
-      type: recFilters.type || null,
-      startDate: start,
-      endDate: end
+      type: null,
+      startDate: f.dateStart || null,
+      endDate: f.dateEnd || null
     });
-    // 2) 关键词：匹配 类型/单元/客户/商品/类别/备注
-    const kw = (recFilters.keyword || '').trim().toLowerCase();
-    if (kw) {
-      list = list.filter(t => {
-        const hay = [t.type, t.unit, t.customer_name, t.product_name, t.category, t.note]
-          .filter(Boolean).join(' ').toLowerCase();
-        return hay.includes(kw);
-      });
-    }
-    // 3) 按 id 降序（创建时间倒序）
+    // 2) 收支方向
+    if (f.dir === 'income') list = list.filter(t => t.amount > 0);
+    else if (f.dir === 'expense') list = list.filter(t => t.amount < 0);
+    // 3) 费用类型多选（无选中则不过滤）
+    if (f.type && f.type.length > 0) list = list.filter(t => f.type.includes(t.type));
+    // 3) 客户名称模糊
+    const cust = (f.customer || '').trim().toLowerCase();
+    if (cust) list = list.filter(t => (t.customer_name || '').toLowerCase().includes(cust));
+    // 4) 商品名称模糊
+    const prod = (f.product || '').trim().toLowerCase();
+    if (prod) list = list.filter(t => (t.product_name || '').toLowerCase().includes(prod));
+    // 5) 金额范围（绝对值）
+    const amtMin = parseFloat(f.amtMin), amtMax = parseFloat(f.amtMax);
+    if (!isNaN(amtMin)) list = list.filter(t => Math.abs(t.amount) >= amtMin);
+    if (!isNaN(amtMax)) list = list.filter(t => Math.abs(t.amount) <= amtMax);
+    // 记录当前查询结果（供导出使用）
+    lastQueryRows = list.slice();
+    // 6) 按 id 降序（创建时间倒序）
     list.sort((a, b) => b.id - a.id);
     const total = list.length;
     const totalPages = Math.max(1, Math.ceil(total / REC_PAGE_SIZE));
@@ -248,7 +313,7 @@ const Entry = (() => {
             <div class="r-date">${parts.map(escapeHtml).join(' · ')}${opTime ? '　<span class="r-opt">录入于 ' + opTime + '</span>' : ''}</div>
           </div>
           <div class="r-amt ${isPos ? 'pos' : 'neg'}">${isPos ? '+' : '−'}${Calculator.fmtMoney(Math.abs(t.amount))}</div>
-          ${Auth.canEdit() ? `<button class="btn btn-danger btn-sm r-del" onclick="Entry.del(${t.id})">删</button>` : ''}
+          ${Auth.canEdit() ? `<button class="btn btn-secondary btn-sm r-edit" onclick="Entry.edit(${t.id})">编辑</button><button class="btn btn-danger btn-sm r-del" onclick="Entry.del(${t.id})">删</button>` : ''}
         </div>`;
       }).join('');
     }
@@ -269,6 +334,82 @@ const Entry = (() => {
     if (next && recPage < totalPages) next.onclick = () => { recPage++; renderRecords(); };
   }
 
+  // 编辑收支记录：弹窗表单，方向随交易类型自动判定（支出类为负、收入类为正）
+  function edit(id) {
+    const rec = Storage.getTransactionsSync().find(t => t.id === id);
+    if (!rec) return App.toast('记录不存在', 'error');
+    const isIncome = rec.amount > 0;
+    const typeOptions = Storage.getExpenseTypesSync(isIncome ? 'income' : 'expense', { enabledOnly: false }).map(t => t.name);
+    const units = Storage.getUnitList();
+    const customers = Storage.getCustomerOptions();
+    const products = Storage.getProductOptions();
+
+    const body = `
+      <div class="form-group"><label class="form-label">交易类型 <span class="req">*</span></label>
+        <select class="form-select" id="e-type">${typeOptions.map(t => `<option${t === rec.type ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div class="form-group"><label class="form-label">金额 <span class="req">*</span></label>
+        <input type="number" class="form-input" id="e-amount" min="0" step="0.01" value="${Math.abs(rec.amount)}"></div>
+      <div class="form-group"><label class="form-label">归属单元</label>
+        <select class="form-select" id="e-unit">${units.map(u => `<option${u === rec.unit ? ' selected' : ''}>${u}</option>`).join('')}</select></div>
+      <div class="form-group" id="e-catGroup" style="display:none;"><label class="form-label" id="e-catLabel">类别</label>
+        <select class="form-select" id="e-category"></select></div>
+      <div class="form-group" id="e-custGroup"><label class="form-label">客户 <span class="opt">(可选)</span></label>
+        <select class="form-select" id="e-customer"><option value="">— 不关联 —</option>${customers.map(c => `<option value="${c.id}"${c.id === rec.customer_id ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
+      <div class="form-group" id="e-prodGroup"><label class="form-label">商品 <span class="opt">(可选)</span></label>
+        <select class="form-select" id="e-product"><option value="">— 不关联 —</option>${products.map(p => `<option value="${p.id}"${p.id === rec.product_id ? ' selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}</select></div>
+      <div class="form-group"><label class="form-label">日期 <span class="req">*</span></label>
+        <input type="date" class="form-input" id="e-date" value="${rec.date || ''}"></div>
+      <div class="form-group"><label class="form-label">备注</label>
+        <input type="text" class="form-input" id="e-note" value="${escapeHtml(rec.note || '')}"></div>`;
+
+    App.openModal('编辑收支记录', body, async () => {
+      const type = document.getElementById('e-type').value;
+      const amount = parseFloat(document.getElementById('e-amount').value);
+      if (!amount || amount <= 0) return App.toast('金额必须为有效正数', 'error');
+      const date = document.getElementById('e-date').value;
+      if (!date) return App.toast('请选择日期', 'error');
+      const cfg = getLinkCfg(type, isIncome ? 'income' : 'expense');
+      const category = cfg.cat ? (document.getElementById('e-category').value || null) : null;
+      const customerId = cfg.customer ? (document.getElementById('e-customer').value || null) : null;
+      const productId = cfg.product ? (document.getElementById('e-product').value || null) : null;
+      const signedAmount = isIncome ? Math.abs(amount) : -Math.abs(amount);
+      await API.put('/transactions/' + id, {
+        amount: signedAmount, type, unit: document.getElementById('e-unit').value,
+        customer_id: customerId ? Number(customerId) : null,
+        product_id: productId ? Number(productId) : null,
+        date, note: document.getElementById('e-note').value, category
+      });
+      await Storage.refreshCache();
+      renderRecords();
+      App.closeModal();
+      App.toast('记录已更新', 'success');
+      if (App.currentPage === 'dashboard') Dashboard.render();
+    });
+
+    // 类型联动：显示/隐藏客户、商品、类别，并回填当前类别
+    const applyEditLinkage = () => {
+      const type = document.getElementById('e-type').value;
+      const cfg = getLinkCfg(type, isIncome ? 'income' : 'expense');
+      document.getElementById('e-custGroup').style.display = cfg.customer ? '' : 'none';
+      document.getElementById('e-prodGroup').style.display = cfg.product ? '' : 'none';
+      const catGroup = document.getElementById('e-catGroup');
+      const catSel = document.getElementById('e-category');
+      if (cfg.cat) {
+        catGroup.style.display = '';
+        document.getElementById('e-catLabel').textContent = (cfg.cat === 'processing' ? '加工类别' : '杂费类别');
+        const items = Storage.getExpenseItemsSync(cfg.cat);
+        catSel.innerHTML = items.length
+          ? items.map(i => `<option value="${escapeHtml(i.name)}"${i.name === rec.category ? ' selected' : ''}>${escapeHtml(i.name)}</option>`).join('')
+          : '<option value="">（暂无可选类别）</option>';
+      } else {
+        catGroup.style.display = 'none';
+        catSel.innerHTML = '';
+      }
+    };
+    applyEditLinkage();
+    document.getElementById('e-type').addEventListener('change', applyEditLinkage);
+  }
+
   async function del(id) {
     if (!confirm('确认删除该条记录？')) return;
     try {
@@ -287,17 +428,37 @@ const Entry = (() => {
     document.getElementById('dirIncome').addEventListener('click', () => setDirection('income'));
     document.getElementById('entrySubmit').addEventListener('click', submit);
     document.getElementById('entryType').addEventListener('change', applyTypeLinkage);
-    // 记录列表筛选
-    const recType = document.getElementById('recType');
-    const recRange = document.getElementById('recRange');
-    const recKeyword = document.getElementById('recKeyword');
-    if (recType) recType.addEventListener('change', (e) => { recFilters.type = e.target.value; recPage = 1; renderRecords(); });
-    if (recRange) recRange.addEventListener('change', (e) => { recFilters.range = e.target.value; recPage = 1; renderRecords(); });
-    if (recKeyword) recKeyword.addEventListener('input', (e) => { recFilters.keyword = e.target.value; recPage = 1; renderRecords(); });
+    // 收支查询筛选
+    const bindFilter = (id, key, evt) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener(evt, (e) => { recFilters[key] = e.target.value; recPage = 1; renderRecords(); });
+    };
+    // 收支方向变化时联动类型 chips
+    const recDirEl = document.getElementById('recDir');
+    if (recDirEl) {
+      recDirEl.addEventListener('change', (e) => {
+        recFilters.dir = e.target.value;
+        recPage = 1;
+        renderTypeChips();
+        renderRecords();
+      });
+    }
+    bindFilter('recDateStart', 'dateStart', 'change');
+    bindFilter('recDateEnd', 'dateEnd', 'change');
+    bindFilter('recCustomer', 'customer', 'input');
+    bindFilter('recProduct', 'product', 'input');
+    bindFilter('recAmtMin', 'amtMin', 'input');
+    bindFilter('recAmtMax', 'amtMax', 'input');
+    const recResetBtn = document.getElementById('recResetBtn');
+    if (recResetBtn) recResetBtn.addEventListener('click', resetFilters);
     // 客户 / 商品 可搜索下拉（combobox），每次展开实时读取最新数据
     setupCombobox('entryCustomerInput', 'entryCustomerPanel', 'entryCustomerId', () => Storage.getCustomerOptions());
     setupCombobox('entryProductInput', 'entryProductPanel', 'entryProductId', () => Storage.getProductOptions());
   }
 
-  return { render, renderRecords, bind, del };
+  // 返回当前收支查询结果（供导出使用）
+  function getQueryRows() { return lastQueryRows; }
+
+  return { render, renderAdd, renderQuery, renderRecords, bind, del, edit, getQueryRows };
 })();

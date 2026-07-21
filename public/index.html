@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>阿米巴经营数字助手</title>
-<link rel="stylesheet" href="css/style.css">
+<link rel="icon" type="image/x-icon" href="images/favicon.ico?v=20260716j">
+<link rel="stylesheet" href="css/style.css?v=20260716j">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -29,102 +30,202 @@
       <div id="loginError" class="login-error" style="display:none;"></div>
       <button type="submit" class="btn btn-primary btn-block login-btn">登 录</button>
     </form>
-    <div class="login-tip">
-      <div class="info-tip"><span class="ic">💡</span><div>默认管理员：<strong>admin / admin123</strong>　录入员：<strong>editor / editor123</strong></div></div>
-    </div>
   </div>
 </div>
 
 <!-- ========== 主应用 ========== -->
 <div id="appPage" class="app-page" style="display:none;">
-  <!-- 顶部导航栏 -->
-  <nav class="app-header">
-    <div class="app-logo"><div class="logo-icon">◎</div><span>阿米巴经营数字助手</span></div>
-    <div class="app-nav" id="appNav">
-      <div class="nav-tab active" data-page="dashboard"><span class="nav-icon">📊</span><span>看板</span></div>
-      <div class="nav-tab" data-page="entry"><span class="nav-icon">📝</span><span>录入</span></div>
-      <div class="nav-tab" data-page="business"><span class="nav-icon">📁</span><span>业务</span></div>
-      <div class="nav-tab" data-page="employees"><span class="nav-icon">👤</span><span>员工</span></div>
-      <div class="nav-tab" data-page="settings"><span class="nav-icon">⚙️</span><span>设置</span></div>
-      <div class="nav-tab admin-only" data-page="users"><span class="nav-icon">🔐</span><span>用户管理</span></div>
-    </div>
-    <div class="user-menu">
-      <span class="user-name" id="userDisplayName">—</span>
-      <span class="user-role" id="userRoleTag">—</span>
-      <button class="btn btn-secondary btn-sm" id="logoutBtn">退出</button>
-    </div>
-  </nav>
 
-  <!-- 主内容区 -->
-  <main class="app-main">
+  <!-- ========== 左侧竖条导航 ========== -->
+  <aside class="sidebar">
+    <div class="sidebar-brand"><img class="sb-logo" src="images/favicon.png?v=20260713fd" alt="logo"><span class="sb-name">阿米巴经营助手</span></div>
+    <nav class="sidebar-nav" id="sidebarNav">
+      <div class="nav-item active" data-key="dashboard"><span class="ni-ic">📊</span><span class="ni-label">经营看板</span></div>
 
-    <!-- ===== 看板页 ===== -->
-    <section class="page-section active" id="page-dashboard">
-      <div class="page-toolbar">
-        <div><div class="page-title">经营看板</div><div class="page-subtitle">实时掌握阿米巴经营状况</div></div>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <select class="form-select" id="dashboardUnitFilter" style="width:auto;"><option>全部单元</option></select>
-          <select class="form-select" id="dashboardPeriodFilter" style="width:auto;">
-            <option value="month">本月</option>
-            <option value="quarter">本季</option>
-            <option value="year">本年</option>
-            <option value="all">全部时间</option>
-          </select>
-          <select class="form-select" id="dashboardCurrency" style="width:auto;">
-            <option value="CNY">¥ 人民币</option>
-            <option value="USD">$ 美元</option>
-            <option value="EUR">€ 欧元</option>
-          </select>
-          <button class="btn btn-secondary btn-sm" onclick="Export.exportTransactions()">导出收支</button>
+      <div class="nav-group has-sub">
+        <div class="nav-item" data-page="entry" data-toggle="sub"><span class="ni-ic">💰</span><span class="ni-label">收支管理</span><span class="ni-caret">▸</span></div>
+        <div class="sub-list">
+          <div class="nav-sub" data-key="entry-add"><span class="ni-dot">•</span>收支录入</div>
+          <div class="nav-sub" data-key="entry-query"><span class="ni-dot">•</span>收支查询</div>
         </div>
       </div>
-      <div id="rateInfoBar" class="rate-info-bar"></div>
-      <div class="metric-grid row3">
-        <div class="metric-card"><div class="m-name">销售收入</div><div class="m-value positive" id="m-sales">¥ 0</div><div class="m-sub">本期销售</div></div>
-        <div class="metric-card"><div class="m-name">现金收入</div><div class="m-value positive" id="m-cash">¥ 0</div><div class="m-sub">本期现金</div></div>
-        <div class="metric-card"><div class="m-name">总收入</div><div class="m-value positive" id="m-total-income">¥ 0</div><div class="m-sub">销售+现金</div></div>
-      </div>
-      <div class="metric-grid row3">
-        <div class="metric-card"><div class="m-name">材料采购支出</div><div class="m-value negative" id="m-material">¥ 0</div></div>
-        <div class="metric-card"><div class="m-name">委托加工支出</div><div class="m-value negative" id="m-process">¥ 0</div></div>
-        <div class="metric-card"><div class="m-name">消费支出 <span class="help" data-tooltip="消费支出 = 材料采购 + 委托加工。即直接用于生产的成本支出。">?</span></div><div class="m-value negative" id="m-consume">¥ 0</div><div class="m-sub">材料+加工</div></div>
-      </div>
-      <div class="metric-grid row3">
-        <div class="metric-card"><div class="m-name">杂费支出</div><div class="m-value negative" id="m-misc">¥ 0</div></div>
-        <div class="metric-card highlight"><div class="m-name">附加价值 <span class="help" data-tooltip="附加价值 = 总收入 − 消费支出 − 杂费支出。反映企业经营创造的新价值，是阿米巴经营的核心指标。">?</span></div><div class="m-value" id="m-added">¥ 0</div><div class="m-formula">收入-消费-杂费</div></div>
-        <div class="metric-card"><div class="m-name">缴纳税金</div><div class="m-value negative" id="m-tax">¥ 0</div></div>
-      </div>
-      <div class="metric-grid row4">
-        <div class="metric-card"><div class="m-name">总工资</div><div class="m-value" id="m-salary">¥ 0</div></div>
-        <div class="metric-card"><div class="m-name">利润 <span class="help" data-tooltip="利润 = 附加价值 − 总工资 − 缴纳税金。即扣除人工和税金后的经营成果。">?</span></div><div class="m-value" id="m-profit">¥ 0</div></div>
-        <div class="metric-card"><div class="m-name">总工时</div><div class="m-value" id="m-hours">0 h</div></div>
-        <div class="metric-card"><div class="m-name">单位时间附加值 <span class="help" data-tooltip="单位时间附加值 = 附加价值 ÷ 总工时。衡量每小时劳动创造的价值量。">?</span></div><div class="m-value" id="m-unit-added">¥ 0/h</div><div class="m-sub">附加价值÷总工时</div></div>
-      </div>
-      <div class="metric-grid row4">
-        <div class="metric-card"><div class="m-name">单位时间工资 <span class="help" data-tooltip="单位时间工资 = 总工资 ÷ 总工时。反映每小时劳动的人工成本。">?</span></div><div class="m-value" id="m-unit-salary">¥ 0/h</div><div class="m-sub">总工资÷总工时</div></div>
-        <div class="metric-card"><div class="m-name">单位时间利润 <span class="help" data-tooltip="单位时间利润 = 利润 ÷ 总工时。反映每小时劳动创造的净利润。">?</span></div><div class="m-value" id="m-unit-profit">¥ 0/h</div><div class="m-sub">利润÷总工时</div></div>
-      </div>
-      <div class="chart-grid">
-        <div class="chart-card"><div class="c-title" id="trendTitle">收支趋势 <span class="chart-unit-hint">纵轴：金额（折算后）</span></div><canvas id="chartTrend" height="160"></canvas></div>
-        <div class="chart-card"><div class="c-title">支出构成</div><canvas id="chartExpense" height="160"></canvas></div>
-        <div class="chart-card"><div class="c-title">收入构成</div><canvas id="chartIncome" height="160"></canvas></div>
-      </div>
 
-      <div class="dash-module">
-        <div class="module-head"><span class="module-title">📦 库存总览</span><span class="module-sub">对照库存与经营数据，辅助判断店铺经营状况</span></div>
-        <div class="metric-grid row3">
-          <div class="metric-card primary"><div class="m-name">在库 SKU</div><div class="m-value" id="dashInvCount">0</div></div>
-          <div class="metric-card"><div class="m-name">库存总价值</div><div class="m-value" id="dashInvValue">¥ 0</div></div>
-          <div class="metric-card"><div class="m-name">零库存 SKU</div><div class="m-value negative" id="dashInvZero">0</div></div>
+      <div class="nav-group has-sub">
+        <div class="nav-item" data-page="customer" data-toggle="sub"><span class="ni-ic">👥</span><span class="ni-label">客户管理</span><span class="ni-caret">▸</span></div>
+        <div class="sub-list">
+          <div class="nav-sub" data-key="customer-add"><span class="ni-dot">•</span>客户录入</div>
+          <div class="nav-sub" data-key="customer-query"><span class="ni-dot">•</span>客户查询</div>
         </div>
-        <div class="table-wrap"><table class="data-table" id="dashInventoryTable"></table></div>
       </div>
-    </section>
 
-    <!-- ===== 录入页 ===== -->
-    <section class="page-section" id="page-entry">
-      <div class="page-title">数据录入</div>
-      <div class="two-col">
+      <div class="nav-group has-sub">
+        <div class="nav-item" data-page="product" data-toggle="sub"><span class="ni-ic">🏷</span><span class="ni-label">商品管理</span><span class="ni-caret">▸</span></div>
+        <div class="sub-list">
+          <div class="nav-sub" data-key="product-add"><span class="ni-dot">•</span>商品录入</div>
+          <div class="nav-sub" data-key="product-query"><span class="ni-dot">•</span>商品查询</div>
+        </div>
+      </div>
+
+      <div class="nav-item" data-key="contract"><span class="ni-ic">📑</span><span class="ni-label">合同管理</span></div>
+      <div class="nav-item" data-key="inventory"><span class="ni-ic">📦</span><span class="ni-label">库存管理</span></div>
+
+      <div class="nav-group has-sub">
+        <div class="nav-item" data-page="employees" data-toggle="sub"><span class="ni-ic">👤</span><span class="ni-label">员工管理</span><span class="ni-caret">▸</span></div>
+        <div class="sub-list">
+          <div class="nav-sub" data-key="emp-roster"><span class="ni-dot">•</span>员工信息</div>
+          <div class="nav-sub" data-key="emp-history"><span class="ni-dot">•</span>员工入离职记录</div>
+          <div class="nav-sub" data-key="emp-hours"><span class="ni-dot">•</span>工时与工资</div>
+        </div>
+      </div>
+
+      <div class="nav-group has-sub">
+        <div class="nav-item" data-page="settings" data-toggle="sub"><span class="ni-ic">⚙️</span><span class="ni-label">经营设置</span><span class="ni-caret">▸</span></div>
+        <div class="sub-list">
+          <div class="nav-sub" data-key="set-dept"><span class="ni-dot">•</span>部门设置</div>
+          <div class="nav-sub" data-key="set-display"><span class="ni-dot">•</span>显示与导出设置</div>
+          <div class="nav-sub" data-key="set-misc"><span class="ni-dot">•</span>杂费类别设置</div>
+          <div class="nav-sub" data-key="set-types"><span class="ni-dot">•</span>收支类型</div>
+        </div>
+      </div>
+
+      <div class="nav-item admin-only" data-key="users"><span class="ni-ic">🔐</span><span class="ni-label">账号管理</span></div>
+    </nav>
+  </aside>
+
+  <!-- ========== 右侧内容区 ========== -->
+  <div class="content">
+    <header class="topbar">
+      <div class="topbar-title" id="topbarTitle">经营看板</div>
+      <div class="user-menu">
+        <span class="user-name" id="userDisplayName">—</span>
+        <span class="user-role" id="userRoleTag">—</span>
+        <button class="btn btn-secondary btn-sm" id="logoutBtn">退出</button>
+      </div>
+    </header>
+    <main class="app-main">
+
+      <!-- ===== 经营看板 ===== -->
+      <section class="page-section active" id="page-dashboard">
+        <div class="page-toolbar" style="justify-content:flex-end;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select class="form-select" id="dashboardUnitFilter" style="width:auto;"><option>全部单元</option></select>
+            <select class="form-select" id="dashboardPeriodFilter" style="width:auto;" title="时间段（最小单位为月份）">
+              <option value="month">本月</option>
+              <option value="lastMonth">上月</option>
+              <option value="year">今年</option>
+              <option value="lastYear">上年</option>
+              <option value="custom">自定义月份…</option>
+            </select>
+            <span id="customRangeWrap" style="display:none;align-items:center;gap:6px;">
+              <input type="month" class="form-input" id="dashboardStartMonth" style="width:auto;">
+              <span class="text-muted">至</span>
+              <input type="month" class="form-input" id="dashboardEndMonth" style="width:auto;">
+            </span>
+            <button class="btn btn-primary btn-sm btn-export" onclick="Export.exportTransactions()">导出收支</button>
+          </div>
+        </div>
+        <div id="rateInfoBar" class="rate-info-bar"></div>
+
+        <!-- 模块一：阿米巴核心指标 -->
+        <div class="dash-module core-module">
+          <div class="module-head">
+            <span class="module-title">🎯 阿米巴核心指标</span>
+            <span class="module-sub">衡量阿米巴单元经营健康度的最关键数据</span>
+          </div>
+          <div class="metric-grid row4">
+            <div class="metric-card highlight"><div class="m-name">附加价值 <span class="help" data-tooltip="附加价值 = 总收入 − 消费支出 − 杂费支出。阿米巴经营创造的新价值，是核心中的核心。">?</span></div><div class="m-value" id="m-added">¥ 0</div><div class="m-formula">收入-消费-杂费</div></div>
+            <div class="metric-card highlight"><div class="m-name">单位时间附加价值 <span class="help" data-tooltip="单位时间附加价值 = 附加价值 ÷ 总工时。衡量每小时劳动创造的价值量。">?</span></div><div class="m-value" id="m-unit-added">¥ 0/h</div><div class="m-sub">附加价值÷总工时</div></div>
+            <div class="metric-card highlight"><div class="m-name">单位时间利润 <span class="help" data-tooltip="单位时间利润 = 利润 ÷ 总工时。反映每小时劳动创造的净利润。">?</span></div><div class="m-value" id="m-unit-profit">¥ 0/h</div><div class="m-sub">利润÷总工时</div></div>
+            <div class="metric-card highlight"><div class="m-name">总利润 <span class="help" data-tooltip="总利润 = 附加价值 − 总工资 − 缴纳税金。扣除人工与税金后的经营成果。">?</span></div><div class="m-value" id="m-profit">¥ 0</div></div>
+          </div>
+        </div>
+
+        <!-- 模块二：日常经营指标 -->
+        <div class="dash-module">
+          <div class="module-head">
+            <span class="module-title">📊 日常经营指标</span>
+            <span class="module-sub">本期收入与支出的明细构成</span>
+          </div>
+          <div class="sub-group">
+            <div class="sub-label income-label">收入类</div>
+            <div class="metric-grid row4">
+              <div class="metric-card"><div class="m-name">销售收入</div><div class="m-value positive" id="m-sales">¥ 0</div><div class="m-sub">本期销售</div></div>
+              <div class="metric-card"><div class="m-name">现金收入</div><div class="m-value positive" id="m-cash">¥ 0</div><div class="m-sub">本期现金</div></div>
+              <div class="metric-card"><div class="m-name">总收入</div><div class="m-value positive" id="m-total-income">¥ 0</div><div class="m-sub">销售+现金</div></div>
+              <div class="metric-card"><div class="m-name">应收款</div><div class="m-value positive" id="m-receivable">¥ 0</div><div class="m-sub">销售-现金</div></div>
+            </div>
+          </div>
+          <div class="sub-group">
+            <div class="sub-label expense-label">支出类</div>
+            <div class="metric-grid row4">
+              <div class="metric-card"><div class="m-name">材料采购支出</div><div class="m-value negative" id="m-material">¥ 0</div></div>
+              <div class="metric-card"><div class="m-name">委托加工支出</div><div class="m-value negative" id="m-process">¥ 0</div></div>
+              <div class="metric-card"><div class="m-name">杂费支出</div><div class="m-value negative" id="m-misc">¥ 0</div></div>
+              <div class="metric-card"><div class="m-name">缴纳税金</div><div class="m-value negative" id="m-tax">¥ 0</div></div>
+            </div>
+            <div class="metric-grid row3">
+              <div class="metric-card"><div class="m-name">总支出</div><div class="m-value negative" id="m-total-expense">¥ 0</div><div class="m-sub">材料+加工+杂费+税金</div></div>
+              <div class="metric-card"><div class="m-name">现金支出</div><div class="m-value negative" id="m-cash-expense">¥ 0</div><div class="m-sub">本期付现</div></div>
+              <div class="metric-card"><div class="m-name">应付款</div><div class="m-value negative" id="m-payable">¥ 0</div><div class="m-sub">总支出-现金支出</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 模块三：员工工资（阿米巴体系中不计入经营支出） -->
+        <div class="dash-module wage-module">
+          <div class="module-head">
+            <span class="module-title">💴 员工工资</span>
+            <span class="module-sub">阿米巴体系中，员工工资不计入经营支出</span>
+          </div>
+          <div class="wage-note">
+            <span class="wn-ic">💡</span>
+            <div>阿米巴经营的目的，是追求全体员工物质与精神两方面的幸福。因此<b>员工工资并不属于阿米巴的"经营支出"</b>——它不用于衡量阿米巴的盈亏，而是经营成果由全员共享的对象。</div>
+          </div>
+          <div class="metric-grid row3">
+            <div class="metric-card"><div class="m-name">总工时</div><div class="m-value" id="m-hours">0 h</div></div>
+            <div class="metric-card"><div class="m-name">总工资 <span class="help" data-tooltip="总工资 = Σ(工时 × 时薪)。阿米巴经营成果由全员共享，不计入经营支出。">?</span></div><div class="m-value" id="m-salary">¥ 0</div></div>
+            <div class="metric-card"><div class="m-name">单位时间工资 <span class="help" data-tooltip="单位时间工资 = 总工资 ÷ 总工时。反映每小时劳动的人工成本。">?</span></div><div class="m-value" id="m-unit-salary">¥ 0/h</div><div class="m-sub">总工资÷总工时</div></div>
+          </div>
+        </div>
+
+        <!-- 模块四：经营图表 -->
+        <div class="dash-module">
+          <div class="module-head">
+            <span class="module-title">📈 经营图表</span>
+            <span class="module-sub">收支趋势与构成一目了然</span>
+          </div>
+          <div class="chart-grid">
+            <div class="chart-card">
+              <div class="c-title">收支趋势 <span class="chart-unit-hint">纵轴：金额（折算后）</span></div>
+              <canvas id="chartTrend" height="160"></canvas>
+              <div class="trend-range-label" id="trendRangeLabel"></div>
+            </div>
+            <div class="chart-card"><div class="c-title">支出构成</div><canvas id="chartExpense" height="160"></canvas></div>
+            <div class="chart-card"><div class="c-title">收入构成</div><canvas id="chartIncome" height="160"></canvas></div>
+          </div>
+        </div>
+
+        <!-- 模块五：库存总览 -->
+        <div class="dash-module">
+          <div class="module-head">
+            <span class="module-title">📦 库存总览</span>
+            <span class="module-sub">对照库存与经营数据，辅助判断店铺经营状况</span>
+          </div>
+          <div class="metric-grid row3">
+            <div class="metric-card primary"><div class="m-name">在库 SKU</div><div class="m-value" id="dashInvCount">0</div></div>
+            <div class="metric-card"><div class="m-name">库存总价值</div><div class="m-value" id="dashInvValue">¥ 0</div></div>
+            <div class="metric-card"><div class="m-name">零库存 SKU</div><div class="m-value negative" id="dashInvZero">0</div></div>
+          </div>
+          <div class="inv-filter-bar">
+            <input type="text" class="form-input" id="dashInvFilter" placeholder="按商品名称筛选库存…" style="max-width:280px;">
+          </div>
+          <div class="table-wrap"><table class="data-table" id="dashInventoryTable"></table></div>
+        </div>
+      </section>
+
+      <!-- ===== 收支录入 ===== -->
+      <section class="page-section" id="page-entry-add">
+        <div class="page-title">收支录入</div>
         <div class="card">
           <div class="card-title">收支录入</div>
           <div class="form-group">
@@ -176,154 +277,332 @@
           </div>
           <button class="btn btn-primary btn-block" id="entrySubmit">提交录入</button>
         </div>
-        <div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-            <div style="font-size:14px;font-weight:600;">收支记录 <span id="entryCount" class="text-muted"></span></div>
-            <button class="btn btn-secondary btn-sm" onclick="Export.exportTransactions()">导出收支明细</button>
-          </div>
-          <div class="rec-filters">
-            <select class="form-select form-select-sm" id="recType">
-              <option value="">全部类型</option>
-              <option>材料采购</option>
-              <option>委托加工</option>
-              <option>杂费支出</option>
-              <option>税金</option>
-              <option>销售收入</option>
-              <option>现金收入</option>
-              <option>其他收入</option>
+      </section>
+
+      <!-- ===== 收支查询 ===== -->
+      <section class="page-section" id="page-entry-query">
+        <div class="page-title">收支查询</div>
+        <div class="query-toolbar">
+          <div class="q-row">
+            <label class="q-label">收支方向：</label>
+            <select class="form-select" id="recDir" style="width:auto;" title="收支方向">
+              <option value="">全部方向</option>
+              <option value="income">收入</option>
+              <option value="expense">支出</option>
             </select>
-            <select class="form-select form-select-sm" id="recRange">
-              <option value="">全部时间</option>
-              <option value="month">本月</option>
-              <option value="quarter">本季</option>
-              <option value="year">本年</option>
-            </select>
-            <input type="text" class="form-input form-input-sm" id="recKeyword" placeholder="搜索客户/商品/备注...">
+            <label class="q-label">费用类型：</label>
+            <div class="q-type-chips" id="recTypeChips"></div>
           </div>
-          <div id="entryRecords"></div>
-          <div class="rec-pager" id="recPager"></div>
+          <div class="q-row">
+            <label class="q-label">交易日期范围：</label>
+            <input type="date" class="form-input" id="recDateStart" style="width:auto;" title="开始日期">
+            <span class="text-muted">至</span>
+            <input type="date" class="form-input" id="recDateEnd" style="width:auto;" title="结束日期">
+          </div>
+          <div class="q-row">
+            <label class="q-label">客户名称：</label>
+            <input type="text" class="form-input" id="recCustomer" style="width:140px;">
+            <label class="q-label">商品名称：</label>
+            <input type="text" class="form-input" id="recProduct" style="width:140px;">
+            <label class="q-label">金额范围：</label>
+            <input type="number" class="form-input" id="recAmtMin" placeholder="≥" style="width:100px;">
+            <span class="text-muted">至</span>
+            <input type="number" class="form-input" id="recAmtMax" placeholder="≤" style="width:100px;">
+            <button class="btn btn-secondary btn-sm" id="recResetBtn">重置</button>
+            <button class="btn btn-primary btn-sm btn-export" onclick="Export.exportTransactions(Entry.getQueryRows())">导出当前结果</button>
+          </div>
         </div>
-      </div>
-    </section>
+        <div class="list-toolbar"><span class="list-title">收支记录 <span id="entryCount" class="text-muted"></span></span></div>
+        <div id="entryRecords"></div>
+        <div class="rec-pager" id="recPager"></div>
+      </section>
 
-    <!-- ===== 业务页 ===== -->
-    <section class="page-section" id="page-business">
-      <div class="page-title">业务管理</div>
-      <div class="setting-desc" style="margin-bottom:8px;">管理合同、客户、商品和库存信息，点击各页右上角"导出"可导出对应数据</div>
-      <div class="tab-bar">
-        <div class="tab-item active" data-btab="contract">📑 合同</div>
-        <div class="tab-item" data-btab="customer">👥 客户</div>
-        <div class="tab-item" data-btab="product">🏷 商品</div>
-        <div class="tab-item" data-btab="inventory">📦 库存</div>
-      </div>
-
-      <!-- 合同 -->
-      <div class="btab-content active" id="btab-contract">
-        <div class="metric-grid row3">
-          <div class="metric-card primary"><div class="m-name">合同总数</div><div class="m-value" id="contractCount">0</div></div>
-          <div class="metric-card"><div class="m-name">合同总金额</div><div class="m-value" id="contractAmount">¥ 0</div></div>
-          <div class="metric-card"><div class="m-name">进行中</div><div class="m-value positive" id="contractActive">0</div></div>
+      <!-- ===== 客户录入 ===== -->
+      <section class="page-section" id="page-customer-add">
+        <div class="page-title">客户录入</div>
+        <div class="card">
+          <div class="card-title">新增客户</div>
+          <div class="form-group">
+            <label class="form-label">客户名称 <span class="req">*</span></label>
+            <div class="combobox" id="custAddNameCb">
+              <input type="text" class="form-input" id="custAddName" placeholder="请输入客户名称" autocomplete="off">
+              <div class="cb-panel" id="custAddNamePanel"></div>
+            </div>
+            <div class="dup-hint" id="custAddDupHint"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">客户类型 <span class="req">*</span></label>
+            <select class="form-select" id="custAddType"><option>个人</option><option>公司</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">联系方式</label>
+            <input type="text" class="form-input" id="custAddContact" placeholder="电话 / 微信等">
+          </div>
+          <div class="form-group">
+            <label class="form-label">地址</label>
+            <input type="text" class="form-input" id="custAddAddress" placeholder="可选">
+          </div>
+          <button class="btn btn-primary" id="custAddSave">保存客户</button>
         </div>
-        <div class="list-toolbar"><span class="list-title">合同列表</span><div style="display:flex;gap:6px;"><button class="btn btn-secondary btn-sm" onclick="Export.exportContracts()">导出</button><button class="btn btn-primary btn-sm" onclick="Business.openContractModal()">+ 添加合同</button></div></div>
-        <div class="table-wrap"><table class="data-table" id="contractTable"></table></div>
-      </div>
+      </section>
 
-      <!-- 客户 -->
-      <div class="btab-content" id="btab-customer">
+      <!-- ===== 客户查询 ===== -->
+      <section class="page-section" id="page-customer-query">
+        <div class="page-title">客户查询</div>
+        <div class="query-toolbar">
+          <input type="text" class="form-input" id="custQName" placeholder="客户名称" style="width:160px;">
+          <select class="form-select" id="custQType" style="width:auto;"><option value="">全部类型</option><option>个人</option><option>公司</option></select>
+          <button class="btn btn-secondary btn-sm" id="custResetBtn">重置</button>
+          <button class="btn btn-primary btn-sm btn-export" onclick="Business.exportCustomerQuery()">导出当前结果</button>
+        </div>
         <div class="metric-grid row3">
           <div class="metric-card primary"><div class="m-name">客户总数</div><div class="m-value" id="customerCount">0</div></div>
           <div class="metric-card"><div class="m-name">个人客户</div><div class="m-value" id="customerPersonal">0</div></div>
           <div class="metric-card"><div class="m-name">公司客户</div><div class="m-value" id="customerCompany">0</div></div>
         </div>
-        <div class="list-toolbar"><span class="list-title">客户列表</span><div style="display:flex;gap:6px;"><button class="btn btn-secondary btn-sm" onclick="Export.exportCustomers()">导出</button><button class="btn btn-primary btn-sm" onclick="Business.openCustomerModal()">+ 添加客户</button></div></div>
         <div class="table-wrap"><table class="data-table" id="customerTable"></table></div>
-      </div>
+      </section>
 
-      <!-- 商品 -->
-      <div class="btab-content" id="btab-product">
+      <!-- ===== 商品录入 ===== -->
+      <section class="page-section" id="page-product-add">
+        <div class="page-title">商品录入</div>
+        <div class="card">
+          <div class="card-title">新增商品</div>
+          <div class="form-group">
+            <label class="form-label">商品名称 <span class="req">*</span></label>
+            <div class="combobox" id="prodAddNameCb">
+              <input type="text" class="form-input" id="prodAddName" placeholder="请输入商品名称" autocomplete="off">
+              <div class="cb-panel" id="prodAddNamePanel"></div>
+            </div>
+            <div class="dup-hint" id="prodAddDupHint"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">品牌</label>
+            <input type="text" class="form-input" id="prodAddBrand" placeholder="可选">
+          </div>
+          <div class="form-group">
+            <label class="form-label">一级分类 <span class="req">*</span></label>
+            <select class="form-select" id="prodAddCat1" onchange="Business.onCat1ChangeAdd()"><option value="">请选择</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">二级分类</label>
+            <select class="form-select" id="prodAddCat2"><option value="">请先选一级分类</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">单位</label>
+            <select class="form-select" id="prodAddUnit"><option>件</option><option>条</option><option>个</option><option>套</option><option>双</option><option>米</option><option>千克</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">采购价</label>
+            <input type="number" class="form-input" id="prodAddPurchase" min="0" step="0.01" value="0">
+          </div>
+          <div class="form-group">
+            <label class="form-label">销售价</label>
+            <input type="number" class="form-input" id="prodAddSale" min="0" step="0.01" value="0">
+          </div>
+          <button class="btn btn-primary" id="prodAddSave">保存商品</button>
+        </div>
+      </section>
+
+      <!-- ===== 商品查询 ===== -->
+      <section class="page-section" id="page-product-query">
+        <div class="page-title">商品查询</div>
+        <div class="query-toolbar">
+          <input type="text" class="form-input" id="prodQName" placeholder="商品名称" style="width:150px;">
+          <select class="form-select" id="prodQCat1" style="width:auto;"><option value="">全部一级分类</option></select>
+          <select class="form-select" id="prodQCat2" style="width:auto;"><option value="">全部二级分类</option></select>
+          <button class="btn btn-secondary btn-sm" id="prodResetBtn">重置</button>
+          <button class="btn btn-primary btn-sm btn-export" onclick="Business.exportProductQuery()">导出当前结果</button>
+        </div>
         <div class="metric-grid row3">
           <div class="metric-card primary"><div class="m-name">商品总数</div><div class="m-value" id="productCount">0</div></div>
           <div class="metric-card"><div class="m-name">分类数</div><div class="m-value" id="productCatCount">0</div></div>
           <div class="metric-card"><div class="m-name">平均售价</div><div class="m-value" id="productAvgPrice">¥ 0</div></div>
         </div>
-        <div class="list-toolbar"><span class="list-title">商品列表</span><div style="display:flex;gap:6px;"><button class="btn btn-secondary btn-sm" onclick="Export.exportProducts()">导出</button><button class="btn btn-primary btn-sm" onclick="Business.openProductModal()">+ 添加商品</button></div></div>
         <div class="table-wrap"><table class="data-table" id="productTable"></table></div>
-      </div>
+      </section>
 
-      <!-- 库存 -->
-      <div class="btab-content" id="btab-inventory">
-        <div class="list-toolbar"><span class="list-title">库存列表</span><button class="btn btn-primary btn-sm" id="addInventoryBtn" onclick="Business.openInventoryModal()">+ 添加库存</button></div>
+      <!-- ===== 合同管理 ===== -->
+      <section class="page-section" id="page-contract">
+        <div class="page-title">合同管理</div>
+        <div class="metric-grid row3">
+          <div class="metric-card primary"><div class="m-name">合同总数</div><div class="m-value" id="contractCount">0</div></div>
+          <div class="metric-card"><div class="m-name">合同总金额</div><div class="m-value" id="contractAmount">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">进行中</div><div class="m-value positive" id="contractActive">0</div></div>
+        </div>
+        <div class="query-toolbar">
+          <input type="text" class="form-input" id="contractQCustomer" placeholder="客户名称" style="width:180px;">
+          <button class="btn btn-secondary btn-sm" id="contractResetBtn">重置</button>
+          <button class="btn btn-primary btn-sm" onclick="Business.openContractModal()">+ 添加合同</button>
+        </div>
+        <div class="table-wrap"><table class="data-table" id="contractTable"></table></div>
+      </section>
+
+      <!-- ===== 库存管理 ===== -->
+      <section class="page-section" id="page-inventory">
+        <div class="page-title">库存管理</div>
+        <div class="query-toolbar">
+          <input type="text" class="form-input" id="invQProduct" placeholder="商品名称" style="width:180px;">
+          <button class="btn btn-secondary btn-sm" id="invResetBtn">重置</button>
+          <button class="btn btn-primary btn-sm" id="addInventoryBtn" onclick="Business.openInventoryModal()">+ 添加库存</button>
+        </div>
         <div class="table-wrap"><table class="data-table" id="inventoryTable"></table></div>
-      </div>
-    </section>
+      </section>
 
-    <!-- ===== 员工页 ===== -->
-    <section class="page-section" id="page-employees">
-      <div class="page-toolbar">
-        <div><div class="page-title">员工管理</div><div class="page-subtitle">月工资 = 月工时 × 时薪</div></div>
-        <div style="display:flex;gap:8px;">
+      <!-- ===== 员工信息（原员工档案） ===== -->
+      <section class="page-section" id="page-emp-roster">
+        <div class="page-toolbar">
+          <div><div class="page-title">员工信息</div></div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <button class="btn btn-primary btn-sm" onclick="Employees.openModal()">+ 添加员工</button>
+          </div>
+        </div>
+        <div class="query-toolbar" style="margin-bottom:10px;">
+          <input type="text" class="form-input" id="rosterQName" placeholder="姓名" style="width:160px;">
+          <div class="seg-group">
+            <button class="seg-btn roster-status-seg active" data-status="all">全部</button>
+            <button class="seg-btn roster-status-seg" data-status="active">在职</button>
+            <button class="seg-btn roster-status-seg" data-status="left">离职</button>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="rosterResetBtn">重置</button>
+          <button class="btn btn-primary btn-sm btn-export" id="rosterExportBtn" style="display:none;" onclick="Export.exportEmployeeRoster(Employees.getRosterExportRows())">导出档案</button>
+        </div>
+        <div class="metric-row" style="display:flex;gap:12px;margin-bottom:12px;">
+          <div class="metric-card primary" style="padding:10px 14px;min-width:120px;text-align:center;">
+            <div class="m-name" style="font-size:12px;margin-bottom:2px;">当前在职员工人数</div>
+            <div class="m-value" id="rosterCount" style="font-size:22px;">0</div>
+          </div>
+          <div class="metric-card" style="padding:10px 14px;min-width:120px;text-align:center;">
+            <div class="m-name" style="font-size:12px;margin-bottom:2px;">离职员工人数</div>
+            <div class="m-value" id="rosterLeftCount" style="font-size:22px;">0</div>
+          </div>
+        </div>
+        <div class="table-wrap"><table class="data-table" id="rosterTable"></table></div>
+      </section>
+
+      <!-- ===== 员工入离职记录 ===== -->
+      <section class="page-section" id="page-emp-history">
+        <div class="page-toolbar">
+          <div><div class="page-title">员工入离职记录</div><div class="page-subtitle">记录每位员工每次入职、离职、复职的状态变更</div></div>
+        </div>
+        <div class="query-toolbar" style="margin-bottom:10px;flex-wrap:wrap;align-items:center;">
+          <label class="q-label">操作时间：</label>
+          <input type="text" class="form-input" id="histCreatedAt" placeholder="操作时间" style="width:150px;">
+          <label class="q-label">变更登记日期：</label>
+          <input type="date" class="form-input" id="histDate" style="width:auto;">
+          <label class="q-label">员工ID：</label>
+          <input type="text" class="form-input" id="histEmpId" placeholder="员工ID" style="width:90px;">
+          <label class="q-label">员工姓名：</label>
+          <input type="text" class="form-input" id="histName" placeholder="姓名" style="width:130px;">
+          <label class="q-label">状态变更：</label>
+          <select class="form-select" id="histChangeType" style="width:auto;">
+            <option value="">全部</option>
+            <option value="入职">入职</option>
+            <option value="离职">离职</option>
+            <option value="复职">复职</option>
+          </select>
+          <label class="q-label">岗位：</label>
+          <input type="text" class="form-input" id="histPosition" placeholder="岗位" style="width:130px;">
+          <button class="btn btn-secondary btn-sm" id="histResetBtn">重置</button>
+        </div>
+        <div class="table-wrap"><table class="data-table" id="histTable"></table></div>
+      </section>
+
+      <!-- ===== 工时与工资（员工工时记录） ===== -->
+      <section class="page-section" id="page-emp-hours">
+        <div class="page-toolbar">
+          <div><div class="page-title">工时与工资</div><div class="page-subtitle">按月记录工时，月工资 = 月工时 × 时薪</div></div>
+        </div>
+        <div class="query-toolbar" style="margin-bottom:10px;flex-wrap:wrap;align-items:center;">
+          <label class="q-label">查询年月：</label>
           <select class="form-select" id="empYear" style="width:auto;"></select>
           <select class="form-select" id="empMonth" style="width:auto;"></select>
-          <button class="btn btn-secondary btn-sm" onclick="Export.exportEmployees()">导出员工</button>
-          <button class="btn btn-primary btn-sm" onclick="Employees.openModal()">+ 添加员工</button>
+          <label class="q-label">员工姓名：</label>
+          <input type="text" class="form-input" id="empQName" placeholder="姓名" style="width:160px;">
+          <button class="btn btn-secondary btn-sm" id="empResetBtn">重置</button>
+          <button class="btn btn-primary btn-sm btn-export" onclick="Export.exportEmployees(Employees.getExportRows())">导出工时工资</button>
         </div>
-      </div>
-      <div class="metric-grid row3">
-        <div class="metric-card primary"><div class="m-name">员工总数</div><div class="m-value" id="empCount">0</div></div>
-        <div class="metric-card"><div class="m-name">本月总工时</div><div class="m-value" id="empTotalHours">0 h</div></div>
-        <div class="metric-card"><div class="m-name">本月工资总额</div><div class="m-value" id="empTotalSalary">¥ 0</div></div>
-      </div>
-      <div class="table-wrap"><table class="data-table" id="empTable"></table></div>
-    </section>
-
-    <!-- ===== 设置页 ===== -->
-    <section class="page-section" id="page-settings">
-      <div class="page-title">系统设置</div>
-      <div class="card">
-        <div class="setting-row">
-          <div><div class="setting-name">部门独立核算 <span class="status-tag" id="amoebaTag">已启用</span></div>
-          <div class="setting-desc">开启后按部门分别统计收入和支出，查看每个部门的经营成果</div></div>
-          <label class="switch"><input type="checkbox" id="amoebaSwitch" checked><span class="slider"></span></label>
+        <div class="metric-grid row3">
+          <div class="metric-card primary"><div class="m-name">本月参与人数</div><div class="m-value" id="empCount">0</div></div>
+          <div class="metric-card"><div class="m-name">本月总工时</div><div class="m-value" id="empTotalHours">0 h</div></div>
+          <div class="metric-card"><div class="m-name">本月工资总额</div><div class="m-value" id="empTotalSalary">¥ 0</div></div>
         </div>
-      </div>
-      <div class="card" style="margin-top:12px;">
-        <div class="card-title">部门管理</div>
-        <div class="setting-desc" style="margin-bottom:10px;">添加或删除部门，勾选哪些部门参与独立统计</div>
-        <div id="unitList"></div>
-        <div class="unit-add">
-          <input type="text" class="form-input" id="newUnitInput" placeholder="输入部门名称" style="flex:1;">
-          <button class="btn btn-secondary btn-sm" id="addUnitBtn">+ 添加部门</button>
+        <div class="table-wrap"><table class="data-table" id="empTable"></table></div>
+      </section>
+
+      <!-- ===== 部门设置 ===== -->
+      <section class="page-section" id="page-set-dept">
+        <div class="page-title">部门设置</div>
+        <div class="card">
+          <div class="setting-row">
+            <div><div class="setting-name">部门独立核算 <span class="status-tag" id="amoebaTag">已启用</span></div>
+            <div class="setting-desc">开启后按部门分别统计收入和支出，查看每个部门的经营成果</div></div>
+            <label class="switch"><input type="checkbox" id="amoebaSwitch" checked><span class="slider"></span></label>
+          </div>
         </div>
-      </div>
-      <div class="card" style="margin-top:12px;">
-        <div class="card-title">显示与导出</div>
-        <div class="form-group"><label class="form-label">显示币种</label><select class="form-select" id="setCurrency"><option value="¥">¥ 人民币</option><option value="$">$ 美元</option><option value="€">€ 欧元</option></select>
-        <div class="setting-desc">切换后全站金额将按实时汇率折算显示（数据仍以人民币存储，可在看板页面切换币种并查看汇率详情）</div></div>
-        <div class="form-group"><label class="form-label">数据导出格式</label><select class="form-select" id="setExport"><option>CSV</option><option>Excel</option><option>JSON</option></select>
-        <div class="setting-desc">在各数据页面的右上角点击"导出"按钮，可将当前页面数据导出为文件</div></div>
-      </div>
-      <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">
-        <button class="btn btn-secondary" id="resetDataBtn">重置示例数据</button>
-        <button class="btn btn-primary" id="saveSettingsBtn">保存设置</button>
-      </div>
-    </section>
+        <div class="card" style="margin-top:12px;">
+          <div class="card-title">部门管理</div>
+          <div class="setting-desc" style="margin-bottom:10px;">添加或删除部门，勾选哪些部门参与独立统计</div>
+          <div id="unitList"></div>
+          <div class="unit-add">
+            <input type="text" class="form-input" id="newUnitInput" placeholder="输入部门名称" style="flex:1;">
+            <button class="btn btn-secondary btn-sm" id="addUnitBtn">+ 添加部门</button>
+          </div>
+        </div>
+      </section>
 
-    <!-- ===== 用户管理页 ===== -->
-    <section class="page-section" id="page-users">
-      <div class="page-toolbar">
-        <div><div class="page-title">用户管理</div><div class="page-subtitle">管理系统用户账号与权限角色</div></div>
-        <button class="btn btn-primary btn-sm" onclick="Users.openModal()">+ 添加用户</button>
-      </div>
-      <div class="metric-grid row4">
-        <div class="metric-card primary"><div class="m-name">用户总数</div><div class="m-value" id="userCount">0</div></div>
-        <div class="metric-card"><div class="m-name">管理员</div><div class="m-value" id="userAdminCount">0</div><div class="m-sub">全部权限</div></div>
-        <div class="metric-card"><div class="m-name">录入员</div><div class="m-value" id="userEditorCount">0</div><div class="m-sub">可录入编辑</div></div>
-        <div class="metric-card"><div class="m-name">查看者</div><div class="m-value" id="userViewerCount">0</div><div class="m-sub">仅可查看</div></div>
-      </div>
-      <div class="table-wrap"><table class="data-table" id="userTable"></table></div>
-    </section>
+      <!-- ===== 显示与导出设置 ===== -->
+      <section class="page-section" id="page-set-display">
+        <div class="page-title">显示与导出设置</div>
+        <div class="card">
+          <div class="card-title">显示与导出</div>
+          <div class="form-group"><label class="form-label">显示币种</label><select class="form-select" id="setCurrency"><option value="¥">¥ 人民币</option><option value="$">$ 美元</option><option value="€">€ 欧元</option></select>
+          <div class="setting-desc">切换后全站金额将按实时汇率折算显示（数据仍以人民币存储）</div></div>
+          <div class="form-group"><label class="form-label">数据导出格式</label><select class="form-select" id="setExport"><option>CSV</option><option>Excel</option><option>JSON</option></select>
+          <div class="setting-desc">在各数据页面的右上角点击"导出"按钮，可将当前页面数据导出为文件</div></div>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">
+          <button class="btn btn-secondary" id="resetDataBtn">重置示例数据</button>
+          <button class="btn btn-primary" id="saveSettingsBtn">保存设置</button>
+        </div>
+      </section>
 
-  </main>
+      <!-- ===== 杂费类别设置 ===== -->
+      <section class="page-section" id="page-set-misc">
+        <div class="page-title">杂费类别设置</div>
+        <div class="setting-desc" style="margin-bottom:8px;">配置录入时可选的收支项细分类别。当前支持「杂费支出」的杂费类别管理，配置项按账号独立隔离。</div>
+        <div class="list-toolbar">
+          <span class="list-title">杂费类别 <span class="text-muted" id="miscItemCount">0</span></span>
+          <button class="btn btn-primary btn-sm" id="addMiscItemBtn" onclick="Business.openMiscItemModal()">+ 添加类别</button>
+        </div>
+        <div class="table-wrap"><table class="data-table" id="miscItemTable"></table></div>
+      </section>
+
+      <!-- ===== 收支类型设置 ===== -->
+      <section class="page-section" id="page-set-types">
+        <div class="page-title">收支类型设置</div>
+        <div class="setting-desc" style="margin-bottom:8px;">配置录入时可选的「费用类型」（如材料采购、委托加工、销售收入等）。可自定义增删、启停，并设置每个类型是否关联客户 / 商品 / 加工或杂费细分。历史记录按名称保留，不受启停影响。</div>
+        <div class="list-toolbar">
+          <span class="list-title">收支类型 <span class="text-muted" id="etCount">0</span></span>
+          <button class="btn btn-primary btn-sm" id="etAddBtn" onclick="Business.openExpenseTypeModal()">+ 新增类型</button>
+        </div>
+        <div class="table-wrap"><table class="data-table" id="etTable"></table></div>
+      </section>
+
+      <!-- ===== 账号管理 ===== -->
+      <section class="page-section" id="page-users">
+        <div class="page-toolbar">
+          <div><div class="page-title">账号管理</div><div class="page-subtitle">管理系统用户账号</div></div>
+          <button class="btn btn-primary btn-sm" onclick="Users.openModal()">+ 添加用户</button>
+        </div>
+        <div class="metric-grid row4">
+          <div class="metric-card primary"><div class="m-name">用户总数</div><div class="m-value" id="userCount">0</div></div>
+        </div>
+        <div class="table-wrap"><table class="data-table" id="userTable"></table></div>
+      </section>
+
+    </main>
+  </div>
 </div>
 
 <!-- ========== 通用 Modal ========== -->
@@ -338,18 +617,18 @@
 <!-- ========== Toast ========== -->
 <div id="toastContainer"></div>
 
-<script src="js/api.js"></script>
-<script src="js/storage.js"></script>
-<script src="js/currency.js"></script>
-<script src="js/calculator.js"></script>
-<script src="js/auth.js"></script>
-<script src="js/dashboard.js"></script>
-<script src="js/entry.js"></script>
-<script src="js/business.js"></script>
-<script src="js/employees.js"></script>
-<script src="js/settings.js"></script>
-<script src="js/users.js"></script>
-<script src="js/export.js"></script>
-<script src="js/app.js"></script>
+<script src="js/api.js?v=20260716j"></script>
+<script src="js/storage.js?v=20260715da"></script>
+<script src="js/currency.js?v=20260715da"></script>
+<script src="js/calculator.js?v=20260716j"></script>
+<script src="js/auth.js?v=20260715da"></script>
+<script src="js/dashboard.js?v=20260715da"></script>
+<script src="js/entry.js?v=20260715da"></script>
+<script src="js/business.js?v=20260715da"></script>
+<script src="js/employees.js?v=20260716j"></script>
+<script src="js/settings.js?v=20260715da"></script>
+<script src="js/users.js?v=20260715da"></script>
+<script src="js/export.js?v=20260715da"></script>
+<script src="js/app.js?v=20260715da"></script>
 </body>
 </html>

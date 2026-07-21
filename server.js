@@ -57,9 +57,7 @@ app.use((err, req, res, next) => {
 function start() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n  ◎ 阿米巴经营数字助手 已启动（PostgreSQL）`);
-    console.log(`  → 监听: http://0.0.0.0:${PORT}`);
-    console.log(`  → 默认管理员: admin / admin123`);
-    console.log(`  → 录入员账号: editor / editor123\n`);
+    console.log(`  → 监听: http://0.0.0.0:${PORT}\n`);
   });
   // 后台初始化；失败时仅记录，不退出进程（避免端口 9000 无监听导致 443）
   db.init().catch((e) => console.error('[启动] db.init 异常:', e.message));

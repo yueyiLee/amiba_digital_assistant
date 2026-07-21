@@ -5,17 +5,26 @@
 const Settings = (() => {
 
   function render() {
+    renderDept();
+    renderDisplay();
+  }
+
+  // 部门设置页：阿米巴独立核算开关 + 部门管理
+  function renderDept() {
     const s = Storage.getSettingsSync();
     const amoebaEnabled = s.amoeba_enabled !== 'false';
     document.getElementById('amoebaSwitch').checked = amoebaEnabled;
     document.getElementById('amoebaTag').textContent = amoebaEnabled ? '已启用' : '未启用';
     document.getElementById('amoebaTag').style.background = amoebaEnabled ? '#dcfce7' : '#f1f5f9';
     document.getElementById('amoebaTag').style.color = amoebaEnabled ? '#059669' : '#64748b';
+    renderUnitList();
+  }
 
+  // 显示与导出设置页：币种 + 导出格式
+  function renderDisplay() {
+    const s = Storage.getSettingsSync();
     document.getElementById('setCurrency').value = s.currency || '¥';
     document.getElementById('setExport').value = s.export_format || 'CSV';
-
-    renderUnitList();
   }
 
   function renderUnitList() {
@@ -49,11 +58,9 @@ const Settings = (() => {
         export_format: exportFormat
       });
       await Storage.refreshCache();
-      // 同步币种到 Currency 模块和看板切换器
+      // 同步币种到 Currency 模块（全站金额按实时汇率折算显示）
       const curCode = currency === '$' ? 'USD' : (currency === '€' ? 'EUR' : 'CNY');
       Currency.setDisplayCurrency(curCode);
-      const dashCurSel = document.getElementById('dashboardCurrency');
-      if (dashCurSel) dashCurSel.value = curCode;
       // 全局刷新所有页面以联动汇率折算
       App.refreshAll();
       App.toast('设置已保存，金额已按当前币种汇率折算', 'success');
@@ -118,5 +125,5 @@ const Settings = (() => {
     document.getElementById('resetDataBtn').addEventListener('click', resetData);
   }
 
-  return { render, bind, delUnit };
+  return { render, renderDept, renderDisplay, bind, delUnit };
 })();

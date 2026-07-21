@@ -31,7 +31,9 @@ const DEFAULT_CATEGORIES = [
   ['裙装', '连衣裙'], ['裙装', '半身裙'],
   ['针织', '毛衣'], ['针织', '针织衫'],
   ['配饰', '皮带'], ['配饰', '帽子'], ['配饰', '围巾'], ['配饰', '袜子'],
-  ['原材料', '纱线'], ['原材料', '坯布']
+  ['原材料', '纱线'], ['原材料', '坯布'],
+  // 成品面料：一级分类无二级分类（level2 留空，前端展示为"无"）
+  ['成品面料', '']
 ];
 
 // 支出项细分预设（后台配置，前台暂不提供手动增删入口）
@@ -45,6 +47,20 @@ const DEFAULT_EXPENSE_ITEMS = [
   ['misc', '产品运营费用'], ['misc', '车辆费用'], ['misc', '库存利息'], ['misc', '其他管理杂费'],
   ['misc', '医保社保保费'], ['misc', '门店租金'], ['misc', '物业费'],
   ['misc', '机器设备折旧费'], ['misc', '财务费用'], ['misc', '预提所得税']
+];
+
+// 收支类型（费用类型）预设：name / direction / link_customer / link_product / link_cat
+// direction: 'income' | 'expense'；link_cat: ''|'processing'|'misc'（对应细分为委托加工类别/杂费类别）
+// 各账号默认拥有，管理页可自定义增删、启停、修改联动规则（见 routes /expense-types）
+const DEFAULT_EXPENSE_TYPES = [
+  ['材料采购', 'expense', true,  true,  ''],
+  ['委托加工', 'expense', true,  false, 'processing'],
+  ['杂费支出', 'expense', false, false, 'misc'],
+  ['税金',     'expense', true,  true,  ''],
+  ['现金支出', 'expense', true,  true,  ''],
+  ['销售收入', 'income',  true,  true,  ''],
+  ['现金收入', 'income',  true,  true,  ''],
+  ['其他收入', 'income',  true,  true,  ''],
 ];
 
 // 云端 SDK 客户端延迟创建（不在模块加载时缓存）：
@@ -244,6 +260,19 @@ const INIT_TABLES_SQL = `
     UNIQUE(employee_id, month)
   );
 
+  CREATE TABLE IF NOT EXISTS employee_status_history (
+    id SERIAL PRIMARY KEY,
+    employee_id INTEGER REFERENCES employees(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    change_type TEXT DEFAULT '',          -- 入职 / 离职 / 复职
+    position TEXT DEFAULT '',            -- 变更后的最新岗位（离职则空）
+    hourly_rate REAL DEFAULT 0,          -- 变更后的最新时薪（离职则 0）
+    changed_date TEXT NOT NULL,
+    note TEXT DEFAULT '',
+    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
   CREATE TABLE IF NOT EXISTS salaries (
     id SERIAL PRIMARY KEY,
     employee_id INTEGER REFERENCES employees(id) ON DELETE CASCADE,
@@ -284,7 +313,21 @@ const INIT_TABLES_SQL = `
     id SERIAL PRIMARY KEY,
     kind TEXT NOT NULL,
     name TEXT NOT NULL,
+    note TEXT DEFAULT '',
     owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS expense_types (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    direction TEXT NOT NULL DEFAULT 'expense',
+    link_customer BOOLEAN DEFAULT TRUE,
+    link_product BOOLEAN DEFAULT TRUE,
+    link_cat TEXT DEFAULT '',
+    enabled BOOLEAN DEFAULT TRUE,
+    parent_id INTEGER,
+    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(owner_id, name, direction)
   );
 `;
 
@@ -294,7 +337,7 @@ const INIT_TABLES_SQL = `
 
 // 给旧库补齐 owner_id 列（新库建表时已有，ALTER 幂等）
 async function ensureOwnerColumns() {
-  const tables = ['customers', 'products', 'inventory', 'contracts', 'employees', 'work_hours', 'salaries', 'transactions', 'settings', 'categories', 'expense_items'];
+  const tables = ['customers', 'products', 'inventory', 'contracts', 'employees', 'work_hours', 'salaries', 'transactions', 'settings', 'categories', 'expense_items', 'expense_types'];
   for (const t of tables) {
     try {
       await query(`ALTER TABLE ${t} ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE`);
@@ -321,6 +364,111 @@ async function ensureTransactionCategoryColumn() {
     await query('ALTER TABLE transactions ADD COLUMN category TEXT DEFAULT \'\'');
   } catch (e) {
     if (!/already exists/i.test(e.message || '')) throw e;
+  }
+}
+
+// expense_items 旧库补齐 note 列（杂费类别备注说明）
+async function ensureExpenseItemNoteColumn() {
+  try {
+    await query('ALTER TABLE expense_items ADD COLUMN note TEXT DEFAULT \'\'');
+  } catch (e) {
+    if (!/already exists/i.test(e.message || '')) throw e;
+  }
+}
+
+// employees 旧库补齐 status / leave_date 列（员工在职状态标记，软离职）
+async function ensureEmployeeStatusColumns() {
+  try {
+    await query(`ALTER TABLE employees ADD COLUMN status TEXT DEFAULT 'active'`);
+  } catch (e) {
+    if (!/already exists/i.test(e.message || '')) throw e;
+  }
+  try {
+    await query(`ALTER TABLE employees ADD COLUMN leave_date TEXT DEFAULT ''`);
+  } catch (e) {
+    if (!/already exists/i.test(e.message || '')) throw e;
+  }
+}
+
+// employee_status_history 旧库补齐变更类型 / 岗位 / 时薪列
+async function ensureEmployeeStatusHistoryColumns() {
+  for (const col of [
+    "ADD COLUMN change_type TEXT DEFAULT ''",
+    "ADD COLUMN position TEXT DEFAULT ''",
+    "ADD COLUMN hourly_rate REAL DEFAULT 0"
+  ]) {
+    try {
+      await query(`ALTER TABLE employee_status_history ${col}`);
+    } catch (e) {
+      if (!/already exists/i.test(e.message || '')) throw e;
+    }
+  }
+}
+
+// 幂等回填：为「状态历史」功能上线前已存在、但没有任何状态变更记录的员工，
+// 依据 employees.status / leave_date / join_date 反推补全历史；
+// 同时为已存在但缺 change_type/position/hourly_rate 的旧历史行补全这些信息。
+// 这样老数据中"已离职"的员工也能按真实离职区间正确排除工时，
+// 且「员工入离职记录」页与「工时按查询月展示当时信息」有正确数据源。
+async function ensureEmployeeStatusHistoryBackfill() {
+  try {
+    const owners = await queryAll('SELECT DISTINCT owner_id FROM employees WHERE owner_id IS NOT NULL');
+    for (const { owner_id } of owners) {
+      // 1) 完全没有历史记录的员工：补 入职（(+离职)）
+      const emps = await queryAll(
+        `SELECT id, status, leave_date, join_date, position, hourly_rate, created_at
+         FROM employees
+         WHERE owner_id=$1
+           AND id NOT IN (SELECT DISTINCT employee_id FROM employee_status_history WHERE owner_id=$1)`,
+        [owner_id]
+      );
+      for (const emp of emps) {
+        const start = emp.join_date || (emp.created_at ? String(emp.created_at).slice(0, 10) : '2000-01-01');
+        await query(
+          'INSERT INTO employee_status_history(employee_id,status,change_type,position,hourly_rate,changed_date,note,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+          [emp.id, 'active', '入职', emp.position || '', emp.hourly_rate || 0, start, '系统自动补全入职状态', owner_id]
+        );
+        if ((emp.status || 'active') === 'left' && emp.leave_date) {
+          await query(
+            'INSERT INTO employee_status_history(employee_id,status,change_type,position,hourly_rate,changed_date,note,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+            [emp.id, 'left', '离职', '', 0, emp.leave_date, '系统自动补全离职状态', owner_id]
+          );
+        }
+      }
+
+      // 2) 已存在但缺 change_type 的旧历史行：按序列推导并补岗位/时薪
+      const broken = await queryAll(
+        `SELECT h.id, h.employee_id, h.status, h.changed_date, e.position AS emp_position, e.hourly_rate AS emp_rate
+         FROM employee_status_history h
+         JOIN employees e ON e.id = h.employee_id
+         WHERE h.owner_id=$1 AND (h.change_type IS NULL OR h.change_type='')`,
+        [owner_id]
+      );
+      // 按 (employee_id, changed_date, id) 排序，逐员工推导：首条=入职，其后 left→离职 / active→复职
+      const byEmp = {};
+      for (const row of broken) {
+        (byEmp[row.employee_id] = byEmp[row.employee_id] || []).push(row);
+      }
+      for (const empId of Object.keys(byEmp)) {
+        const seq = byEmp[empId].sort((a, b) =>
+          (a.changed_date < b.changed_date ? -1 : a.changed_date > b.changed_date ? 1 : a.id - b.id));
+        for (let idx = 0; idx < seq.length; idx++) {
+          const row = seq[idx];
+          let ct;
+          if (idx === 0) ct = '入职';
+          else ct = (row.status === 'left') ? '离职' : '复职';
+          const pos = (row.status === 'left') ? '' : (seq[0].emp_position || '');
+          const rate = (row.status === 'left') ? 0 : (seq[0].emp_rate || 0);
+          await query(
+            'UPDATE employee_status_history SET change_type=$1, position=$2, hourly_rate=$3 WHERE id=$4',
+            [ct, pos, rate, row.id]
+          );
+        }
+      }
+    }
+    console.log('[DB] 员工状态历史回填完成');
+  } catch (e) {
+    console.error('[DB] 状态历史回填跳过:', e.message);
   }
 }
 
@@ -360,6 +508,28 @@ async function ensureExpenseItemsForAll() {
       }
     }
     if (added > 0) console.log(`[DB] 账号 ${u.id} 补全支出项预设 ${added} 条`);
+  }
+}
+
+// 确保每一个账号都拥有完整的收支类型预设（逐条补全，不删除用户自定义类型）
+async function ensureExpenseTypesForAll() {
+  const users = await queryAll('SELECT id FROM users');
+  for (const u of users) {
+    let added = 0;
+    for (const [name, direction, lc, lp, lcat] of DEFAULT_EXPENSE_TYPES) {
+      const exists = await queryOne(
+        'SELECT 1 FROM expense_types WHERE owner_id=$1 AND name=$2 AND direction=$3 LIMIT 1',
+        [u.id, name, direction]
+      );
+      if (!exists) {
+        await query(
+          'INSERT INTO expense_types(owner_id,name,direction,link_customer,link_product,link_cat,enabled) VALUES($1,$2,$3,$4,$5,$6,$7)',
+          [u.id, name, direction, lc, lp, lcat, true]
+        );
+        added++;
+      }
+    }
+    if (added > 0) console.log(`[DB] 账号 ${u.id} 补全收支类型预设 ${added} 条`);
   }
 }
 
@@ -434,6 +604,17 @@ async function seedForUser(uid, mode) {
   // 商品分类预设（服装行业常用，所有账号默认拥有，便于直接录入商品）
   for (const [l1, l2] of DEFAULT_CATEGORIES) {
     await query('INSERT INTO categories(owner_id,level1,level2) VALUES($1,$2,$3)', [uid, l1, l2]);
+  }
+  // 支出项细分预设（委托加工类别 / 杂费类别，所有账号默认拥有，业务配置模块可反显/增改删）
+  for (const [kind, name] of DEFAULT_EXPENSE_ITEMS) {
+    await query('INSERT INTO expense_items(owner_id,kind,name) VALUES($1,$2,$3)', [uid, kind, name]);
+  }
+  // 收支类型预设（费用类型，可配置联动/启停，所有账号默认拥有）
+  for (const [name, direction, lc, lp, lcat] of DEFAULT_EXPENSE_TYPES) {
+    await query(
+      'INSERT INTO expense_types(owner_id,name,direction,link_customer,link_product,link_cat,enabled) VALUES($1,$2,$3,$4,$5,$6,$7)',
+      [uid, name, direction, lc, lp, lcat, true]
+    );
   }
 
   // 客户
@@ -527,6 +708,18 @@ async function init() {
   // 2.6) transactions 补齐 category 列（支出项细分）
   await ensureTransactionCategoryColumn();
 
+  // 2.7) expense_items 补齐 note 列（杂费类别备注说明）
+  await ensureExpenseItemNoteColumn();
+
+  // 2.8) employees 补齐 status / leave_date 列（在职状态标记）
+  await ensureEmployeeStatusColumns();
+
+  // 2.9) employee_status_history 补齐 change_type / position / hourly_rate 列
+  await ensureEmployeeStatusHistoryColumns();
+
+  // 2.10) 为老数据回填员工状态历史（支撑按真实离职区间统计工时 / 入离职记录 / 工时按查询月展示）
+  await ensureEmployeeStatusHistoryBackfill();
+
   // 3) 旧库数据迁移（幂等）：无主共享数据分配给 admin，editor 重新生成等价数据
   await migrateLegacyData();
 
@@ -535,6 +728,9 @@ async function init() {
 
   // 3.6) 确保每个账号都拥有支出项细分预设（委托加工类别 / 杂费类别）
   await ensureExpenseItemsForAll();
+
+  // 3.7) 确保每个账号都拥有收支类型预设（费用类型，可配置联动/启停）
+  await ensureExpenseTypesForAll();
 
   // 4) 首次启动：无用户则创建 admin/editor 并各自生成完整示例
   const r = await query('SELECT COUNT(*) AS c FROM users');
@@ -545,7 +741,7 @@ async function init() {
     const editorHash = bcrypt.hashSync('editor123', 10);
     await query(
       'INSERT INTO users(username, password_hash, display_name, role) VALUES($1,$2,$3,$4),($5,$6,$7,$8)',
-      ['admin', adminHash, '系统管理员', 'admin', 'editor', editorHash, '数据录入员', 'editor']
+      ['admin', adminHash, '系统管理员', 'admin', 'editor', editorHash, '数据录入员', 'admin']
     );
     const admin = await queryOne("SELECT id FROM users WHERE username='admin'");
     const editor = await queryOne("SELECT id FROM users WHERE username='editor'");
