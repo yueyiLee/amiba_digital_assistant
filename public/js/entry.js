@@ -153,11 +153,16 @@ const Entry = (() => {
     `).join('');
     tagsEl.querySelectorAll('.remove').forEach(btn => {
       btn.addEventListener('click', (e) => {
+        e.preventDefault();
         e.stopPropagation();
-        const name = e.target.dataset.name;
+        // 点击 × 时 e.target 可能是 × 文字所在 span，也可能是其内部文本节点；用 closest 兜底
+        const tagEl = e.target.closest('.multi-select-tag');
+        const name = (tagEl && tagEl.dataset.name) || e.target.dataset.name;
+        if (!name) return;
         recFilters.category = (recFilters.category || []).filter(n => n !== name);
         recPage = 1;
-        renderCategoryOptions();
+        renderCategoryTags();   // 重新渲染标签区（之前的 bug：未调用导致 DOM 不更新）
+        renderCategoryOptions(document.getElementById('recCategoryInput')?.value || '');
         renderRecords();
       });
     });
