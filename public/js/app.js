@@ -7,23 +7,29 @@ const App = (() => {
 
   // 二级页面 key → 渲染动作（复用各模块细粒度渲染函数）
   const ROUTES = {
-    'dashboard':      () => { Dashboard.renderUnitFilter(); Dashboard.render(); },
-    'entry-add':      () => { Entry.renderAdd(); },
-    'entry-query':    () => { Entry.renderQuery(); },
-    'customer-add':   () => { Business.renderCustomerAdd(); },
-    'customer-query': () => { Business.renderCustomerQuery(); },
-    'product-add':    () => { Business.renderProductAdd(); },
-    'product-query':  () => { Business.renderProductQuery(); },
-    'contract':       () => { Business.renderContract(); },
-    'inventory':      () => { Business.renderInventoryQuery(); },
-    'emp-roster':     () => { Employees.renderRoster(); },
-    'emp-history':    () => { Employees.renderHistory(); },
-    'emp-hours':      () => { Employees.renderHours(); },
-    'set-dept':       () => { Settings.renderDept(); },
-    'set-display':    () => { Settings.renderDisplay(); },
-    'set-misc':       () => { Business.renderExpenseItems(); },
-    'set-types':      () => { Business.renderExpenseTypes(); },
-    'users':          () => { Users.render(); }
+    'dashboard':         () => { Dashboard.renderUnitFilter(); Dashboard.render(); },
+    'analysis-overview': () => Analysis.renderOverview(),
+    'analysis-customer': () => Analysis.renderCustomer(),
+    'analysis-product':  () => Analysis.renderProduct(),
+    'analysis-contract': () => Analysis.renderContract(),
+    'analysis-expense':  () => Analysis.renderExpense(),
+    'analysis-cash':     () => Analysis.renderCash(),
+    'entry-add':         () => { Entry.renderAdd(); },
+    'entry-query':       () => { Entry.renderQuery(); },
+    'customer-add':      () => { Business.renderCustomerAdd(); },
+    'customer-query':    () => { Business.renderCustomerQuery(); },
+    'product-add':       () => { Business.renderProductAdd(); },
+    'product-query':     () => { Business.renderProductQuery(); },
+    'contract':          () => { Business.renderContract(); },
+    'inventory':         () => { Business.renderInventoryQuery(); },
+    'emp-roster':        () => { Employees.renderRoster(); },
+    'emp-history':       () => { Employees.renderHistory(); },
+    'emp-hours':         () => { Employees.renderHours(); },
+    'set-dept':          () => { Settings.renderDept(); },
+    'set-display':       () => { Settings.renderDisplay(); },
+    'set-misc':          () => { Business.renderExpenseItems(); },
+    'set-types':         () => { Business.renderExpenseTypes(); },
+    'users':             () => { Users.render(); }
   };
 
   // ========== 初始化 ==========
@@ -60,6 +66,8 @@ const App = (() => {
     // 权限控制：非 admin 超级账号隐藏「账号管理」入口
     const isAdmin = Auth.isAdmin();
     document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? 'flex' : 'none'; });
+    // 经营分析全局绑定（顶部筛选）
+    Analysis.bind();
     // 默认显示看板
     switchPage('dashboard');
   }
@@ -96,6 +104,13 @@ const App = (() => {
     }
     // 渲染对应页面
     ROUTES[key]();
+    // 经营分析页：消费 hash 中的 ?focus=xxx 并在表格里高亮闪烁；同步筛选 UI
+    if (key.startsWith('analysis-')) {
+      Analysis.syncFilters();
+      Analysis.consumeFocus();
+      // 等表格渲染完成
+      setTimeout(() => Analysis.tryFlashOnLoad(), 30);
+    }
   }
 
   function refreshAll() {
@@ -156,12 +171,40 @@ const App = (() => {
     setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateX(100%)'; setTimeout(() => el.remove(), 300); }, 3000);
   }
 
-  return { init, switchPage, refreshAll, openModal, closeModal, toast,
+  // ========== 经营分析 hash 路由 ==========
+  // 驾驶舱"查看→"链接写法：#analysis-customer?focus=customer:123
+  // 监听 hashchange 切到对应页，switchPage 内部会消费 focus 并高亮目标行
+  function handleHashRoute() {
+    const m = (window.location.hash || '').match(/^#([^?&]+)(?:\?(.*))?$/);
+    if (!m) return;
+    const key = m[1];
+    if (!key) return;
+    if (ROUTES[key]) {
+      switchPage(key);
+    } else {
+      // 退回默认页时清掉 hash
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }
+
+  return { init, switchPage, refreshAll, openModal, closeModal, toast, handleHashRoute,
            get currentPage() { return currentKey; } };
 })();
 
-// ========== 启动 ==========
+  // ========== 启动 ==========
 document.addEventListener('DOMContentLoaded', () => {
   Auth.bindLogin();
   App.init();
+  // 经营分析：监听 hash 变化（驾驶舱"查看→"链接跳转 #analysis-customer?focus=customer:123）
+  window.addEventListener('hashchange', App.handleHashRoute);
+  // 首次进入若 URL 携带 hash，也走一次
+  if (window.location.hash) App.handleHashRoute();
+  // 拦截 .alert-link 的默认跳转（避免页面跳到顶部），只更新 hash 触发 hashchange
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest && e.target.closest('.alert-link');
+    if (a && a.dataset && a.dataset.jump) {
+      e.preventDefault();
+      window.location.hash = `${a.dataset.jump}?focus=${encodeURIComponent(a.dataset.focus)}`;
+    }
+  });
 });

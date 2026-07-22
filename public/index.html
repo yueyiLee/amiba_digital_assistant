@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>阿米巴经营数字助手</title>
-<link rel="icon" type="image/x-icon" href="images/favicon.ico?v=20260721c">
-<link rel="stylesheet" href="css/style.css?v=20260721c">
+<link rel="icon" type="image/x-icon" href="images/favicon.ico?v=20260722a">
+<link rel="stylesheet" href="css/style.css?v=20260722a">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -41,6 +41,19 @@
     <div class="sidebar-brand"><img class="sb-logo" src="images/favicon.png?v=20260713fd" alt="logo"><span class="sb-name">阿米巴经营助手</span></div>
     <nav class="sidebar-nav" id="sidebarNav">
       <div class="nav-item active" data-key="dashboard"><span class="ni-ic">📊</span><span class="ni-label">经营看板</span></div>
+
+      <!-- 经营分析分组 -->
+      <div class="nav-group has-sub">
+        <div class="nav-item" data-page="analysis" data-toggle="sub"><span class="ni-ic">📈</span><span class="ni-label">经营分析</span><span class="ni-caret">▸</span></div>
+        <div class="sub-list">
+          <div class="nav-sub" data-key="analysis-overview"><span class="ni-dot">•</span>分析驾驶舱</div>
+          <div class="nav-sub" data-key="analysis-customer"><span class="ni-dot">•</span>客户分析</div>
+          <div class="nav-sub" data-key="analysis-product"><span class="ni-dot">•</span>商品分析</div>
+          <div class="nav-sub" data-key="analysis-contract"><span class="ni-dot">•</span>合同分析</div>
+          <div class="nav-sub" data-key="analysis-expense"><span class="ni-dot">•</span>费用分析</div>
+          <div class="nav-sub" data-key="analysis-cash"><span class="ni-dot">•</span>资金分析</div>
+        </div>
+      </div>
 
       <div class="nav-group has-sub">
         <div class="nav-item" data-page="entry" data-toggle="sub"><span class="ni-ic">💰</span><span class="ni-label">收支管理</span><span class="ni-caret">▸</span></div>
@@ -221,6 +234,196 @@
             <input type="text" class="form-input" id="dashInvFilter" placeholder="按商品名称筛选库存…" style="max-width:280px;">
           </div>
           <div class="table-wrap"><table class="data-table" id="dashInventoryTable"></table></div>
+        </div>
+      </section>
+
+      <!-- ===== 经营分析 ===== -->
+      <!-- 6.0 分析驾驶舱 -->
+      <section class="page-section" id="page-analysis-overview">
+        <div class="page-toolbar">
+          <div>
+            <div class="page-title">分析驾驶舱</div>
+            <div class="page-subtitle">一屏总览本期经营成果与待处理预警</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select class="form-select ana-unit" style="width:auto;"><option>全部单元</option></select>
+            <select class="form-select ana-period" style="width:auto;"></select>
+            <span id="analysisCustomWrap" style="display:none;align-items:center;gap:6px;">
+              <input type="month" class="form-input" id="analysisStartMonth" style="width:auto;">
+              <span class="text-muted">至</span>
+              <input type="month" class="form-input" id="analysisEndMonth" style="width:auto;">
+            </span>
+          </div>
+        </div>
+        <!-- KPI -->
+        <div class="metric-grid row3" style="margin-bottom:12px;">
+          <div class="metric-card highlight"><div class="m-name">本期销售收入</div><div class="m-value" id="anaSales">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">本期应收款</div><div class="m-value" id="anaRecv">¥ 0</div></div>
+          <div class="metric-card highlight"><div class="m-name">本期附加价值</div><div class="m-value" id="anaAdded">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">单位时间附加价值</div><div class="m-value" id="anaUnitAdded">¥ 0/h</div></div>
+          <div class="metric-card"><div class="m-name">本期总支出</div><div class="m-value" id="anaExpense">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">本期总利润</div><div class="m-value" id="anaProfit">¥ 0</div></div>
+        </div>
+        <!-- 预警区 -->
+        <div class="ana-alert-box">
+          <div class="ana-alert-head">
+            <span class="ana-alert-title">🚨 经营预警（红/黄）</span>
+            <span id="alertBadge" class="alert-badge">0 红 / 0 黄</span>
+          </div>
+          <div id="alertList" class="ana-alert-list"></div>
+        </div>
+        <!-- Top 排行 -->
+        <div class="ana-two-col">
+          <div class="ana-card">
+            <div class="ana-card-title">Top 5 客户（按应收）</div>
+            <div id="topCustomers"></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">Top 5 商品（按销售）</div>
+            <div id="topProducts"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 6.1 客户分析 -->
+      <section class="page-section" id="page-analysis-customer">
+        <div class="page-toolbar">
+          <div><div class="page-title">客户分析</div><div class="page-subtitle">销售额、回款、应收账龄，识别高价值/高风险客户</div></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select class="form-select ana-unit" style="width:auto;"><option>全部单元</option></select>
+            <select class="form-select ana-period" style="width:auto;"></select>
+            <span class="ana-custom-wrap" style="display:none;align-items:center;gap:6px;">
+              <input type="month" class="form-input ana-start" style="width:auto;"><span class="text-muted">至</span>
+              <input type="month" class="form-input ana-end" style="width:auto;">
+            </span>
+          </div>
+        </div>
+        <div class="metric-grid row3">
+          <div class="metric-card"><div class="m-name">客户数</div><div class="m-value" id="custCount">0</div></div>
+          <div class="metric-card highlight"><div class="m-name">总销售额</div><div class="m-value" id="custTotalSale">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">总应收</div><div class="m-value" id="custTotalRecv">¥ 0</div></div>
+        </div>
+        <div class="ana-card">
+          <div class="ana-card-title">Top 5 应收客户</div>
+          <div id="custTopBars"></div>
+        </div>
+        <div class="ana-card">
+          <div class="ana-card-title">客户明细</div>
+          <div class="table-wrap"><table class="data-table" id="custTable"></table></div>
+        </div>
+      </section>
+
+      <!-- 6.2 商品分析 -->
+      <section class="page-section" id="page-analysis-product">
+        <div class="page-toolbar">
+          <div><div class="page-title">商品分析</div><div class="page-subtitle">销售额、毛利率、库存周转，识别盈利款与滞销款</div></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select class="form-select ana-unit" style="width:auto;"><option>全部单元</option></select>
+            <select class="form-select ana-period" style="width:auto;"></select>
+            <span class="ana-custom-wrap" style="display:none;align-items:center;gap:6px;">
+              <input type="month" class="form-input ana-start" style="width:auto;"><span class="text-muted">至</span>
+              <input type="month" class="form-input ana-end" style="width:auto;">
+            </span>
+          </div>
+        </div>
+        <div class="metric-grid row3">
+          <div class="metric-card highlight"><div class="m-name">总销售额</div><div class="m-value" id="prodTotalSale">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">平均毛利率</div><div class="m-value" id="prodAvgGm">0%</div></div>
+          <div class="metric-card"><div class="m-name">库存总价值</div><div class="m-value" id="prodTotalInv">¥ 0</div></div>
+        </div>
+        <div class="ana-card">
+          <div class="ana-card-title">Top 5 销售额</div>
+          <div id="prodTopBars"></div>
+        </div>
+        <div class="ana-card">
+          <div class="ana-card-title">商品明细</div>
+          <div class="table-wrap"><table class="data-table" id="prodTable"></table></div>
+        </div>
+      </section>
+
+      <!-- 6.3 合同分析 -->
+      <section class="page-section" id="page-analysis-contract">
+        <div class="page-toolbar">
+          <div><div class="page-title">合同分析</div><div class="page-subtitle">合同金额、已回款、执行率；P1 升级为按合同号严格聚合</div></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select class="form-select ana-unit" style="width:auto;"><option>全部单元</option></select>
+            <select class="form-select ana-period" style="width:auto;"></select>
+            <span class="ana-custom-wrap" style="display:none;align-items:center;gap:6px;">
+              <input type="month" class="form-input ana-start" style="width:auto;"><span class="text-muted">至</span>
+              <input type="month" class="form-input ana-end" style="width:auto;">
+            </span>
+          </div>
+        </div>
+        <div class="metric-grid row3">
+          <div class="metric-card highlight"><div class="m-name">合同总金额</div><div class="m-value" id="contractTotalAmt">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">已回款</div><div class="m-value" id="contractTotalCash">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">未回款</div><div class="m-value" id="contractTotalRemain">¥ 0</div></div>
+        </div>
+        <div class="ana-card">
+          <div class="ana-card-title">合同明细</div>
+          <div class="table-wrap"><table class="data-table" id="contractTable"></table></div>
+        </div>
+      </section>
+
+      <!-- 6.4 费用分析 -->
+      <section class="page-section" id="page-analysis-expense">
+        <div class="page-toolbar">
+          <div><div class="page-title">费用分析</div><div class="page-subtitle">费用结构与月度趋势，识别异常波动</div></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select class="form-select ana-unit" style="width:auto;"><option>全部单元</option></select>
+            <select class="form-select ana-period" style="width:auto;"></select>
+            <span class="ana-custom-wrap" style="display:none;align-items:center;gap:6px;">
+              <input type="month" class="form-input ana-start" style="width:auto;"><span class="text-muted">至</span>
+              <input type="month" class="form-input ana-end" style="width:auto;">
+            </span>
+          </div>
+        </div>
+        <div class="metric-grid row4">
+          <div class="metric-card highlight"><div class="m-name">总费用</div><div class="m-value" id="expTotal">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">材料采购</div><div class="m-value" id="expMat">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">委托加工</div><div class="m-value" id="expProc">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">杂费支出</div><div class="m-value" id="expMisc">¥ 0</div></div>
+        </div>
+        <div class="ana-two-col">
+          <div class="ana-card">
+            <div class="ana-card-title">月度费用趋势（堆叠）</div>
+            <div id="expTrend"></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">费用结构（环形）</div>
+            <div id="expDonut"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 6.5 资金分析 -->
+      <section class="page-section" id="page-analysis-cash">
+        <div class="page-toolbar">
+          <div><div class="page-title">资金分析</div><div class="page-subtitle">现金流入流出、净现金流、应收账龄</div></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select class="form-select ana-unit" style="width:auto;"><option>全部单元</option></select>
+            <select class="form-select ana-period" style="width:auto;"></select>
+            <span class="ana-custom-wrap" style="display:none;align-items:center;gap:6px;">
+              <input type="month" class="form-input ana-start" style="width:auto;"><span class="text-muted">至</span>
+              <input type="month" class="form-input ana-end" style="width:auto;">
+            </span>
+          </div>
+        </div>
+        <div class="metric-grid row4" id="cashKpiRow">
+          <div class="metric-card"><div class="m-name">现金收入</div><div class="m-value" id="cashIn">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">现金支出</div><div class="m-value" id="cashOut">¥ 0</div></div>
+          <div class="metric-card highlight" data-anchor="cash-net"><div class="m-name">净现金流</div><div class="m-value" id="cashNet">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">应收款</div><div class="m-value" id="cashRecv">¥ 0</div></div>
+        </div>
+        <div class="ana-two-col">
+          <div class="ana-card">
+            <div class="ana-card-title">月度现金流（收 vs 支）</div>
+            <div id="cashTrend"></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">应收账龄 Top 10</div>
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>客户</th><th>账龄</th><th>状态</th><th>应收</th></tr></thead><tbody id="cashAging"></tbody></table></div>
+          </div>
         </div>
       </section>
 
@@ -654,13 +857,14 @@
 <script src="js/currency.js?v=20260715da"></script>
 <script src="js/calculator.js?v=20260721d"></script>
 <script src="js/auth.js?v=20260715da"></script>
-<script src="js/dashboard.js?v=20260721d"></script>
-<script src="js/entry.js?v=20260721e"></script>
-<script src="js/business.js?v=20260715da"></script>
-<script src="js/employees.js?v=20260716j"></script>
-<script src="js/settings.js?v=20260715da"></script>
-<script src="js/users.js?v=20260715da"></script>
-<script src="js/export.js?v=20260715da"></script>
-<script src="js/app.js?v=20260715da"></script>
+<script src="js/dashboard.js?v=20260722a"></script>
+<script src="js/entry.js?v=20260722a"></script>
+<script src="js/business.js?v=20260722a"></script>
+<script src="js/employees.js?v=20260722a"></script>
+<script src="js/settings.js?v=20260722a"></script>
+<script src="js/users.js?v=20260722a"></script>
+<script src="js/export.js?v=20260722a"></script>
+<script src="js/analysis.js?v=20260722a"></script>
+<script src="js/app.js?v=20260722a"></script>
 </body>
 </html>
