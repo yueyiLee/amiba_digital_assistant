@@ -30,7 +30,6 @@ const Analysis = (() => {
   function detectAlerts() {
     const txs = Storage.getTransactionsSync({ unit: curUnit, startDate: getRange().start, endDate: getRange().end });
     const customers = Storage.getCustomersSync();
-    const products = Storage.getProductsSync();
     const inventory = Storage.getInventorySync();
     const alerts = [];
 
@@ -43,38 +42,30 @@ const Analysis = (() => {
     });
     Object.keys(recvByCustomer).forEach(cid => {
       const ar = recvByCustomer[cid];
+      if (ar < TH.receivableWatch) return;
+      const c = customers.find(x => String(x.id) === String(cid));
+      if (!c) return;
       if (ar >= TH.receivableOver) {
-        const c = customers.find(x => String(x.id) === String(cid));
-        if (!c) return;
         alerts.push({ level: 'red', kind: 'customer', key: cid, title: `客户【${c.name}】应收 ¥${Math.round(ar).toLocaleString()}`,
           sub: '超过预警阈值，建议立即跟进回款', jumpTo: 'analysis-customer', jumpAnchor: `customer:${cid}` });
-      } else if (ar >= TH.receivableWatch) {
-        const c = customers.find(x => String(x.id) === String(cid));
-        if (!c) return;
+      } else {
         alerts.push({ level: 'yellow', kind: 'customer', key: cid, title: `客户【${c.name}】应收 ¥${Math.round(ar).toLocaleString()}`,
           sub: '需保持关注', jumpTo: 'analysis-customer', jumpAnchor: `customer:${cid}` });
       }
     });
 
-    // 2) 商品毛利率跌破（用"商品汇总收入 / 商品对应材料的成本"做粗略估算）
-    // 销售-按商品：Σ 销售收入关联 product_id
-    const salesByProduct = {};
-    txs.forEach(t => {
-      if (t.type === '销售收入' && t.product_id) {
-        salesByProduct[t.product_id] = (salesByProduct[t.product_id] || 0) + num0(t.amount);
+    // 2) 商品类预警（用真实流水口径：销售收入 - 该商品材料采购 = 毛利）
+    //    —— 之前用 products[].price/avg_cost 在真实数据中常为空，导致商品预警永远不触发
+    const productRows = buildProductMetrics();
+    productRows.forEach(r => {
+      if (r.sale > 0 && r.gm < TH.grossMarginFloor) {
+        alerts.push({ level: 'red', kind: 'product', key: r.id, title: `商品【${r.name}】毛利率 ${(r.gm * 100).toFixed(1)}%`,
+          sub: `跌破 15% 警戒线（销售 ¥${Math.round(r.sale).toLocaleString()} / 成本 ¥${Math.round(r.cost).toLocaleString()}）`,
+          jumpTo: 'analysis-product', jumpAnchor: `product:${r.id}` });
       }
-    });
-    // 估算成本：单价 × 数量——暂无 quantity 字段，退而求其次：材料采购按"该商品历史均价"加权粗估
-    // P0 简化：直接拿"商品最后一次销售/最近一次采购"做对比，若售价 < 采购均价 → 红
-    products.forEach(p => {
-      const price = num0(p.price);          // 售价（商品表）
-      const cost = num0(p.avg_cost || p.purchase_price);  // 进价
-      if (price > 0 && cost > 0) {
-        const gm = (price - cost) / price;
-        if (gm < TH.grossMarginFloor) {
-          alerts.push({ level: 'red', kind: 'product', key: p.id, title: `商品【${p.name}】毛利率 ${(gm * 100).toFixed(1)}%`,
-            sub: '跌破 15% 警戒线，注意采购价/售价', jumpTo: 'analysis-product', jumpAnchor: `product:${p.id}` });
-        }
+      if (r.sale > 0 && r.qty === 0) {
+        alerts.push({ level: 'yellow', kind: 'product', key: r.id, title: `商品【${r.name}】零库存`,
+          sub: '本期有销售但当前库存为 0', jumpTo: 'analysis-product', jumpAnchor: `product:${r.id}` });
       }
     });
 
@@ -103,22 +94,22 @@ const Analysis = (() => {
   }
 
   // ========== 2. 行高亮闪烁（驾驶舱"查看"跳转后使用） ==========
-  // 用 ?focus=xxx 触发：App.switchPage 切到目标页后调用本函数
+  // 推荐用 App.switchPage(key, anchor) → Analysis.flashRow(anchor) 直接传值，避免 hash 链路
   let pendingFocus = null;
   let focusTries = 0;
+  function flashRow(anchor) {
+    pendingFocus = anchor;
+    focusTries = 0;
+  }
+  // 兼容旧的 hash 方式（#page?focus=xxx 刷新场景）
   function consumeFocus() {
     const m = window.location.hash.match(/focus=([^&]+)/);
-    // 注意：点击「查看 →」时 anchor 经过 encodeURIComponent，这里必须 decode，否则
-    // 拿 "customer%3A123" 去匹配 data-anchor="customer:123" 会永远匹配不上（即修复前的 bug）
-    pendingFocus = m ? decodeURIComponent(m[1]) : null;
+    if (m) pendingFocus = decodeURIComponent(m[1]);
     focusTries = 0;
-    if (pendingFocus) {
-      // 清掉 hash 里的 focus（不刷页面），避免下次刷新还残留
-      history.replaceState(null, '', window.location.pathname + window.location.search);
-    }
   }
   function tryFlashOnLoad() {
     if (!pendingFocus) return;
+    // data-anchor 形如 "customer:123" / "cash-net" —— attribute selector 内的冒号是字面字符
     const sel = `[data-anchor="${pendingFocus}"]`;
     const el = document.querySelector(sel);
     if (el) {
@@ -509,7 +500,7 @@ const Analysis = (() => {
             <div class="alert-title">${escapeHtml(a.title)}</div>
             <div class="alert-sub">${escapeHtml(a.sub)}</div>
           </div>
-          <a class="alert-link" href="#${a.jumpTo}?focus=${encodeURIComponent(a.jumpAnchor)}" data-jump="${a.jumpTo}" data-focus="${escapeHtml(a.jumpAnchor)}">查看 →</a>
+          <a class="alert-link" href="javascript:void(0)" data-jump="${a.jumpTo}" data-anchor="${escapeHtml(a.jumpAnchor)}">查看 →</a>
         </div>`).join('');
 
     // Top 5 客户（按应收）
@@ -569,7 +560,7 @@ const Analysis = (() => {
   }
 
   return {
-    bind, syncFilters, consumeFocus, tryFlashOnLoad,
+    bind, syncFilters, consumeFocus, tryFlashOnLoad, flashRow,
     renderOverview, renderCustomer, renderProduct, renderContract, renderExpense, renderCash,
     get unit() { return curUnit; }, setUnit(v) { curUnit = v; }
   };

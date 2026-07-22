@@ -73,7 +73,8 @@ const App = (() => {
   }
 
   // ========== 页面路由 ==========
-  function switchPage(key) {
+  // focusAnchor（可选）：经营分析页跳转到目标行并高亮闪烁，格式如 "customer:123"
+  function switchPage(key, focusAnchor) {
     if (!ROUTES[key]) return;
     // 「账号管理」仅 admin 超级账号可访问
     if (key === 'users' && !Auth.isAdmin()) {
@@ -104,12 +105,12 @@ const App = (() => {
     }
     // 渲染对应页面
     ROUTES[key]();
-    // 经营分析页：消费 hash 中的 ?focus=xxx 并在表格里高亮闪烁；同步筛选 UI
+    // 经营分析页：传入 anchor 直接高亮（替代之前 hash 路由中转，避免链路中任一环节失效）
     if (key.startsWith('analysis-')) {
       Analysis.syncFilters();
-      Analysis.consumeFocus();
-      // 等表格渲染完成
-      setTimeout(() => Analysis.tryFlashOnLoad(), 30);
+      if (focusAnchor) Analysis.flashRow(focusAnchor);
+      // 兜底：等表格渲染完成（异步重试一次）
+      setTimeout(() => { if (focusAnchor) Analysis.tryFlashOnLoad(); }, 30);
     }
   }
 
@@ -195,16 +196,12 @@ const App = (() => {
 document.addEventListener('DOMContentLoaded', () => {
   Auth.bindLogin();
   App.init();
-  // 经营分析：监听 hash 变化（驾驶舱"查看→"链接跳转 #analysis-customer?focus=customer:123）
-  window.addEventListener('hashchange', App.handleHashRoute);
-  // 首次进入若 URL 携带 hash，也走一次
-  if (window.location.hash) App.handleHashRoute();
-  // 拦截 .alert-link 的默认跳转（避免页面跳到顶部），只更新 hash 触发 hashchange
+  // 经营分析：拦截 .alert-link 点击，直接调 App.switchPage（不依赖 hashchange）
   document.addEventListener('click', (e) => {
     const a = e.target.closest && e.target.closest('.alert-link');
     if (a && a.dataset && a.dataset.jump) {
       e.preventDefault();
-      window.location.hash = `${a.dataset.jump}?focus=${encodeURIComponent(a.dataset.focus)}`;
+      App.switchPage(a.dataset.jump, a.dataset.anchor);
     }
   });
 });
