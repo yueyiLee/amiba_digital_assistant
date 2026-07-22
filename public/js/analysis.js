@@ -105,8 +105,13 @@ const Analysis = (() => {
   // ========== 2. 行高亮闪烁（驾驶舱"查看"跳转后使用） ==========
   // 用 ?focus=xxx 触发：App.switchPage 切到目标页后调用本函数
   let pendingFocus = null;
+  let focusTries = 0;
   function consumeFocus() {
-    pendingFocus = (window.location.hash.match(/focus=([^&]+)/) || [])[1] || null;
+    const m = window.location.hash.match(/focus=([^&]+)/);
+    // 注意：点击「查看 →」时 anchor 经过 encodeURIComponent，这里必须 decode，否则
+    // 拿 "customer%3A123" 去匹配 data-anchor="customer:123" 会永远匹配不上（即修复前的 bug）
+    pendingFocus = m ? decodeURIComponent(m[1]) : null;
+    focusTries = 0;
     if (pendingFocus) {
       // 清掉 hash 里的 focus（不刷页面），避免下次刷新还残留
       history.replaceState(null, '', window.location.pathname + window.location.search);
@@ -121,9 +126,12 @@ const Analysis = (() => {
       el.classList.add('row-flash');
       setTimeout(() => el.classList.remove('row-flash'), 2600);
       pendingFocus = null;
-    } else {
-      // 数据未就绪（如异步渲染中）—— 50ms 后再试
+    } else if (focusTries < 40) {
+      // 数据未就绪（如异步渲染中）—— 80ms 后再试，最多 ~3.2s
+      focusTries++;
       setTimeout(tryFlashOnLoad, 80);
+    } else {
+      pendingFocus = null; // 放弃，避免常驻定时器
     }
   }
 
