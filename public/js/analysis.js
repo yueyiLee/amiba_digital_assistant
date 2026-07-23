@@ -479,13 +479,15 @@ const Analysis = (() => {
     const trendBody = months.length === 0 ? '<div class="empty-state">暂无费用数据</div>' : months.map(m => {
       const b = buckets[m];
       const t = b.mat + b.proc + b.misc + b.tax;
+      // 注意：HTML 模板里 inline width 写死百分比，鼠标 hover 的高亮用 CSS class 控制 (.seg-hover / .seg-dim)
+      // data-name/data-value 供 hover tooltip 读取
       return `<div class="exp-month-row">
         <div class="exp-month-label">${m}</div>
         <div class="exp-month-bars">
-          <div class="exp-seg mat" style="width:${(b.mat / t * 100).toFixed(0)}%" title="材料采购"></div>
-          <div class="exp-seg proc" style="width:${(b.proc / t * 100).toFixed(0)}%" title="委托加工"></div>
-          <div class="exp-seg misc" style="width:${(b.misc / t * 100).toFixed(0)}%" title="杂费支出"></div>
-          <div class="exp-seg tax" style="width:${(b.tax / t * 100).toFixed(0)}%" title="税金"></div>
+          <div class="exp-seg mat" style="width:${(b.mat / t * 100).toFixed(0)}%" data-name="材料采购" data-value="${b.mat}"></div>
+          <div class="exp-seg proc" style="width:${(b.proc / t * 100).toFixed(0)}%" data-name="委托加工" data-value="${b.proc}"></div>
+          <div class="exp-seg misc" style="width:${(b.misc / t * 100).toFixed(0)}%" data-name="杂费支出" data-value="${b.misc}"></div>
+          <div class="exp-seg tax" style="width:${(b.tax / t * 100).toFixed(0)}%" data-name="税金" data-value="${b.tax}"></div>
         </div>
         <div class="exp-month-val">${money(t)}</div>
       </div>`;
@@ -500,9 +502,10 @@ const Analysis = (() => {
       { name: '税金',     value: totalTax, color: '#ef4444' },
     ].filter(s => s.value > 0);
     const tot = segs.reduce((s, x) => s + x.value, 0) || 1;
-    const outerR = 70, innerR = 44, cx = 100, cy = 100;
+    // viewBox 放大到 320；外径 130、内径 82（环形宽度 48px），文字字号更大
+    const VB = 320, outerR = 130, innerR = 82, cx = VB / 2, cy = VB / 2;
     let acc = 0;
-    const arcs = segs.map(s => {
+    const arcs = segs.map((s, idx) => {
       const a0 = acc / tot * Math.PI * 2 - Math.PI / 2;
       acc += s.value;
       const a1 = acc / tot * Math.PI * 2 - Math.PI / 2;
@@ -512,14 +515,21 @@ const Analysis = (() => {
       const x1 = cx + outerR * Math.cos(a1), y1 = cy + outerR * Math.sin(a1);
       const x2 = cx + innerR * Math.cos(a1), y2 = cy + innerR * Math.sin(a1);
       const x3 = cx + innerR * Math.cos(a0), y3 = cy + innerR * Math.sin(a0);
-      return `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${outerR} ${outerR} 0 ${large} 1 ${x1.toFixed(1)} ${y1.toFixed(1)} L${x2.toFixed(1)} ${y2.toFixed(1)} A${innerR} ${innerR} 0 ${large} 0 ${x3.toFixed(1)} ${y3.toFixed(1)} Z" fill="${s.color}"/>`;
+      const pct = (s.value / tot * 100).toFixed(1);
+      // data-name/data-value/data-percent 供 hover tooltip + 高亮
+      return `<path class="donut-seg" d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${outerR} ${outerR} 0 ${large} 1 ${x1.toFixed(1)} ${y1.toFixed(1)} L${x2.toFixed(1)} ${y2.toFixed(1)} A${innerR} ${innerR} 0 ${large} 0 ${x3.toFixed(1)} ${y3.toFixed(1)} Z" fill="${s.color}" data-name="${s.name}" data-value="${s.value}" data-percent="${pct}" data-idx="${idx}"/>`;
     }).join('');
-    $('expDonut').innerHTML = `<svg viewBox="0 0 200 200" class="donut-svg">
-      ${arcs || '<circle cx="100" cy="100" r="58" fill="none" stroke="#e2e8f0" stroke-width="14"/>'}
-      <text x="100" y="96" text-anchor="middle" font-size="11" fill="#64748b">总费用</text>
-      <text x="100" y="115" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">${money(tot === 1 ? 0 : tot)}</text>
-    </svg>
-    <div class="donut-legend">${segs.map(s => `<div class="legend-item"><span class="legend-dot" style="background:${s.color}"></span>${s.name}　${(s.value / tot * 100).toFixed(0)}%</div>`).join('')}</div>`;
+    // empty fallback 圆环
+    const emptyRing = `<circle cx="${cx}" cy="${cy}" r="${(outerR + innerR) / 2}" fill="none" stroke="#e2e8f0" stroke-width="${outerR - innerR}"/>`;
+    // 中心文字：总费用 + 金额
+    $('expDonut').innerHTML = `<div class="donut-wrap">
+      <svg viewBox="0 0 ${VB} ${VB}" class="donut-svg">
+        ${arcs || emptyRing}
+        <text x="${cx}" y="${cy - 14}" text-anchor="middle" font-size="16" fill="#64748b">总费用</text>
+        <text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="20" font-weight="700" fill="#0f172a">${money(tot === 1 ? 0 : tot)}</text>
+      </svg>
+      <div class="donut-legend">${segs.map(s => `<div class="legend-item" data-name="${s.name}" data-value="${s.value}" data-color="${s.color}"><span class="legend-dot" style="background:${s.color}"></span>${s.name}　${(s.value / tot * 100).toFixed(1)}%　<span class="legend-amt">${money(s.value)}</span></div>`).join('')}</div>
+    </div>`;
   }
 
   // ========== 8. 资金分析 ==========
@@ -963,6 +973,78 @@ const Analysis = (() => {
           closeAlertConfig();
           return;
         }
+      });
+      // ========== 图表 hover 交互 ==========
+      // 全局 tooltip 引用 + 当前高亮类集合
+      const tipEl = () => document.getElementById('chartTooltip');
+      function showTooltip(html, x, y) {
+        const el = tipEl(); if (!el) return;
+        el.innerHTML = html;
+        el.style.display = 'block';
+        // 防止溢出屏幕右侧/底部
+        const rect = el.getBoundingClientRect();
+        const winW = window.innerWidth, winH = window.innerHeight;
+        let left = x + 14, top = y + 14;
+        if (left + rect.width > winW - 8) left = x - rect.width - 14;
+        if (top + rect.height > winH - 8) top = y - rect.height - 14;
+        el.style.left = left + 'px';
+        el.style.top  = top + 'px';
+      }
+      function hideTooltip() {
+        const el = tipEl(); if (el) el.style.display = 'none';
+      }
+      function fmtPct(v) { return (Math.round(v * 1000) / 10).toFixed(1) + '%'; }
+      // 1) 堆叠图色块 hover（事件委托到 #expTrend 容器，每次重渲染后无需重绑）
+      const expTrendEl = () => document.getElementById('expTrend');
+      const expDonutEl = () => document.getElementById('expDonut');
+      document.addEventListener('mousemove', (e) => {
+        // 堆叠图 seg
+        const seg = e.target.closest && e.target.closest('.exp-seg');
+        if (seg) {
+          const wrap = expTrendEl();
+          if (wrap) {
+            // 高亮：当前 seg 加 .seg-hover，其他加 .seg-dim
+            wrap.querySelectorAll('.exp-seg').forEach(s => {
+              s.classList.remove('seg-hover', 'seg-dim');
+              if (s === seg) s.classList.add('seg-hover');
+              else s.classList.add('seg-dim');
+            });
+          }
+          const value = parseFloat(seg.dataset.value) || 0;
+          const total = parseFloat(seg.parentElement.parentElement.querySelector('.exp-month-val').textContent.replace(/[^0-9.]/g, '')) || 0;
+          showTooltip(
+            `<div class="tt-name" style="color:${getComputedStyle(seg).backgroundColor}">● ${escapeHtml(seg.dataset.name)}</div>` +
+            `<div class="tt-val">${money(value)}　<span class="tt-pct">${total ? fmtPct(value / total) : '0%'}</span></div>`,
+            e.clientX, e.clientY
+          );
+          return;
+        }
+        // 环形图段
+        const donutSeg = e.target.closest && e.target.closest('.donut-seg');
+        if (donutSeg) {
+          const wrap = expDonutEl();
+          if (wrap) {
+            wrap.querySelectorAll('.donut-seg').forEach(s => {
+              s.classList.remove('seg-hover', 'seg-dim');
+              if (s === donutSeg) s.classList.add('seg-hover');
+              else s.classList.add('seg-dim');
+            });
+          }
+          const pct = parseFloat(donutSeg.dataset.percent) || 0;
+          const value = parseFloat(donutSeg.dataset.value) || 0;
+          // 拿原色（用 fill）
+          const fill = donutSeg.getAttribute('fill');
+          showTooltip(
+            `<div class="tt-name" style="color:${fill}">● ${escapeHtml(donutSeg.dataset.name)}</div>` +
+            `<div class="tt-val">${money(value)}　<span class="tt-pct">${pct.toFixed(1)}%</span></div>`,
+            e.clientX, e.clientY
+          );
+          return;
+        }
+        // 都不在：清除高亮 + 隐藏 tooltip
+        const t1 = expTrendEl(); if (t1) t1.querySelectorAll('.exp-seg').forEach(s => s.classList.remove('seg-hover', 'seg-dim'));
+        const t2 = expDonutEl(); if (t2) t2.querySelectorAll('.donut-seg').forEach(s => s.classList.remove('seg-hover', 'seg-dim'));
+        hideTooltip();
       });
     }
   }
