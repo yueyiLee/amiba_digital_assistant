@@ -894,5 +894,48 @@
 <script src="js/export.js?v=20260722a"></script>
 <script src="js/analysis.js?v=20260723c"></script>
 <script src="js/app.js?v=20260723c"></script>
+
+<!-- ========== AI 对话面板 ========== -->
+<div id="aiChatToggle" class="ai-chat-toggle" title="AI 助手">
+  <span class="ai-toggle-icon">🤖</span>
+</div>
+
+<div id="aiChatPanel" class="ai-chat-panel" style="display:none;">
+  <div class="ai-chat-header">
+    <div class="ai-chat-title">
+      <span class="ai-chat-avatar">🤖</span>
+      <span>AI 经营助手</span>
+    </div>
+    <div class="ai-chat-actions">
+      <button class="ai-chat-btn" id="aiChatClear" title="清空对话">🗑</button>
+      <button class="ai-chat-btn" id="aiChatClose" title="关闭">×</button>
+    </div>
+  </div>
+  <div class="ai-chat-body" id="aiChatBody">
+    <div class="ai-chat-welcome">
+      <div class="ai-welcome-icon">👋</div>
+      <p>你好！我是 AI 经营助手，可以帮你：</p>
+      <div class="ai-quick-actions" id="aiQuickActions">
+        <button class="ai-quick-btn" data-prompt="这个月的经营情况怎么样？">📊 本月经营概况</button>
+        <button class="ai-quick-btn" data-prompt="帮我查看所有客户列表">👥 查看客户</button>
+        <button class="ai-quick-btn" data-prompt="本月有哪些支出？按类型汇总">💰 支出汇总</button>
+        <button class="ai-quick-btn" data-prompt="哪些客户还有应收款？">📋 应收账款</button>
+        <button class="ai-quick-btn" data-prompt="帮我看看库存情况">📦 库存查询</button>
+        <button class="ai-quick-btn" data-prompt="本月员工工时和工资是多少？">👤 工时工资</button>
+      </div>
+    </div>
+  </div>
+  <div class="ai-chat-footer">
+    <div class="ai-chat-input-wrap">
+      <textarea id="aiChatInput" class="ai-chat-input" placeholder="输入你的问题...（Shift+Enter 换行）" rows="1"></textarea>
+      <button id="aiChatSend" class="ai-chat-send">发送</button>
+    </div>
+    <div class="ai-chat-hint">AI 可能出错，重要数据请核实</div>
+  </div>
+</div>
+
+<!-- Markdown 渲染库 -->
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+<script src="js/ai-chat.js?v=20260723a"></script>
 </body>
 </html>

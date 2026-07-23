@@ -169,3 +169,59 @@ curl -X POST https://<envId>.service.tcloudbase.com/api/auth/login \
 
 默认管理员账号：`admin / admin123`；录入员：`editor / editor123`。
 
+---
+
+## AI 经营助手
+
+本应用已集成 AI 对话助手，用户可通过自然语言完成全部业务操作。
+
+### 功能
+
+- **智能查询**：「本月经营情况」「哪些客户有应收款」「库存有哪些」
+- **数据录入**：「新增客户张三，公司类型」「记录员工李师傅本月工时80小时」
+- **经营分析**：「分析一下这个月的支出结构」「哪些商品销售额最高」
+- **操作执行**：「删除编号为5的收支记录」「把张三的时薪改为40」
+
+### 使用方式
+
+1. 点击页面右下角 🤖 按钮打开对话面板
+2. 输入问题或点击快捷操作按钮
+3. AI 会自动调用后端工具执行操作并返回结果
+
+### 配置
+
+AI 服务需要配置 LLM API 密钥。复制 `.env.example` 为 `.env` 并填写：
+
+```bash
+cp .env.example .env
+# 编辑 .env 填入 API Key
+LLM_API_KEY=sk-your-key
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_MODEL=deepseek-chat
+```
+
+支持的 LLM 提供商（均兼容 OpenAI API 格式）：
+- DeepSeek（推荐，性价比高）
+- OpenAI GPT-4o-mini
+- 通义千问 qwen-plus
+
+### 技术架构
+
+```
+用户输入 → 前端 ai-chat.js → POST /api/ai/chat (SSE)
+                                    ↓
+                           ai/engine.js (调度循环)
+                              ↓               ↑
+                      ai/llm-client.js   ai/tools.js (25+ 工具)
+                      (调用 LLM API)         ↓
+                                        ai/api-client.js
+                                        (调用已有 /api/* 路由)
+                                             ↓
+                                        Express 路由层
+                                        (复用全部业务逻辑)
+```
+
+AI 通过 Function Calling 调用后端定义的业务工具，
+工具通过内部 HTTP 请求调用已有的 RESTful API（`/api/transactions`、`/api/customers` 等），
+复用全部业务校验和数据隔离逻辑，与前端操作完全一致。
+
