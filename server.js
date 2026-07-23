@@ -3,6 +3,7 @@
  * 技术栈：Node.js + Express + PostgreSQL（pg 连接池）
  * 认证：JWT 身份认证 + 用户管理
  */
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -11,8 +12,13 @@ const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const businessRoutes = require('./routes/index');
 const exchangeRoutes = require('./routes/exchange');
+const aiRoutes = require('./routes/ai');
+const apiClient = require('./ai/api-client');
 
 const app = express();
+
+// 注入 Express app 到 AI apiClient（工具通过它调用已有 RESTful API）
+apiClient.setApp(app);
 const PORT = process.env.PORT || 3000;
 
 // 中间件
@@ -38,6 +44,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/exchange', exchangeRoutes);
 app.use('/api', businessRoutes);
+
+// AI 对话路由（需在 businessRoutes 之后，避免 /api/ai 被 /api/* 兜底）
+app.use('/api/ai', aiRoutes);
 
 // SPA 兜底：非 API 请求返回 index.html
 app.get('*', (req, res) => {

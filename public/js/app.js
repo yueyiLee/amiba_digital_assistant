@@ -63,6 +63,8 @@ const App = (() => {
     Employees.bind();
     Settings.bind();
     Auth.bindLogin();
+    // 绑定 AI 对话面板
+    AIChat.bind();
     // 权限控制：非 admin 超级账号隐藏「账号管理」入口
     const isAdmin = Auth.isAdmin();
     document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin ? 'flex' : 'none'; });

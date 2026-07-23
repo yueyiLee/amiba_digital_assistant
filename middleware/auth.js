@@ -6,7 +6,8 @@
  */
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = 'amoeba-demo-secret-2026';
+// JWT 密钥：优先读环境变量，未配置时用默认值（仅本地开发）
+const JWT_SECRET = process.env.JWT_SECRET || 'amoeba-demo-secret-2026';
 const JWT_EXPIRES = '7d';
 
 function signToken(user) {
