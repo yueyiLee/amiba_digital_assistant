@@ -3,6 +3,7 @@
  * 技术栈：Node.js + Express + PostgreSQL（pg 连接池）
  * 认证：JWT 身份认证 + 用户管理
  */
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
