@@ -10,7 +10,10 @@ const Analysis = (() => {
   const num0 = (v) => Number(v || 0);
   // 当前时间筛选（页内顶部控件绑定）
   let curUnit = '全部单元';
-  let curRange = null; // {start, end, label, granularity}
+  let curPeriod = 'month';        // 'month' | 'lastMonth' | 'year' | 'lastYear' | 'custom' —— 模块变量，跨页持久
+  let curCustomStart = '';        // 仅当 curPeriod === 'custom' 时使用，'YYYY-MM'
+  let curCustomEnd = '';          // 仅当 curPeriod === 'custom' 时使用，'YYYY-MM'
+  let curRange = null;            // {start, end, label, granularity} —— 由 curPeriod + curCustomStart/End 计算
   // 预警阈值（可在驾驶舱页内调整，默认 P0 初版）
   const TH = {
     receivableOver: 80000,    // 客户应收超 ¥80,000 触发红
@@ -22,7 +25,7 @@ const Analysis = (() => {
   // 复用看板时间范围
   function getRange() {
     if (curRange) return curRange;
-    return Calculator.resolveRange({ quick: 'month' });
+    return Calculator.resolveRange({ quick: curPeriod || 'month' });
   }
 
   // ========== 1. 经营预警检测 ==========
@@ -150,33 +153,21 @@ const Analysis = (() => {
       <option value="year">今年</option>
       <option value="lastYear">上年</option>
       <option value="custom">自定义…</option>`;
-    sels.forEach(sel => { sel.innerHTML = html; sel.value = curRange && sel.dataset.touched ? sel.value : 'month'; });
+    // 关键：用 curPeriod（模块变量）回填所有 selector，而不是依赖 dataset.touched
+    sels.forEach(sel => { sel.innerHTML = html; sel.value = curPeriod; });
     document.querySelectorAll('.ana-custom-wrap').forEach(w => {
-      const anyCustom = Array.from(document.querySelectorAll('.ana-period')).some(s => s.value === 'custom');
-      w.style.display = anyCustom ? 'inline-flex' : 'none';
+      w.style.display = curPeriod === 'custom' ? 'inline-flex' : 'none';
     });
-    document.querySelectorAll('.ana-start').forEach(s => {
-      if (!s.value) {
-        const now = new Date();
-        s.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      }
-    });
-    document.querySelectorAll('.ana-end').forEach(e => {
-      if (!e.value) {
-        const now = new Date();
-        e.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      }
-    });
+    // 自定义输入框：用 curCustomStart/End 回填（之前是读 DOM 第一项，导致跨页 bug）
+    document.querySelectorAll('.ana-start').forEach(s => { s.value = curCustomStart; });
+    document.querySelectorAll('.ana-end').forEach(e => { e.value = curCustomEnd; });
   }
   function refreshRange() {
-    const sel = document.querySelector('.ana-period');
-    if (!sel) return;
-    if (sel.value === 'custom') {
-      const s = document.querySelector('.ana-start').value;
-      const e = document.querySelector('.ana-end').value;
-      curRange = Calculator.resolveRange({ quick: 'custom', startMonth: s, endMonth: e });
+    // 直接用模块变量计算，不再从 DOM 读（之前 document.querySelector 拿到的是隐藏 section 的值）
+    if (curPeriod === 'custom') {
+      curRange = Calculator.resolveRange({ quick: 'custom', startMonth: curCustomStart, endMonth: curCustomEnd });
     } else {
-      curRange = Calculator.resolveRange({ quick: sel.value });
+      curRange = Calculator.resolveRange({ quick: curPeriod });
     }
   }
 
@@ -545,15 +536,41 @@ const Analysis = (() => {
           App.refreshAll();
         }
         if (e.target.classList && e.target.classList.contains('ana-period')) {
-          e.target.dataset.touched = '1';
-          document.querySelectorAll('.ana-period').forEach(s => { if (s !== e.target) s.value = e.target.value; });
+          const newPeriod = e.target.value;
+          // 首次从非自定义切到自定义：把当前 curRange 的起止月份作为自定义默认值
+          // 避免 "上年" 选 custom 后 inputs 跳到当前月、数据瞬间清空
+          if (newPeriod === 'custom' && curPeriod !== 'custom') {
+            if (curRange) {
+              if (!curCustomStart) curCustomStart = String(curRange.start).slice(0, 7);
+              if (!curCustomEnd)   curCustomEnd   = String(curRange.end).slice(0, 7);
+            } else {
+              const now = new Date();
+              const def = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+              if (!curCustomStart) curCustomStart = def;
+              if (!curCustomEnd)   curCustomEnd   = def;
+            }
+          }
+          curPeriod = newPeriod;
+          // 同步所有页的 select + 自定义输入框
+          document.querySelectorAll('.ana-period').forEach(s => { if (s !== e.target) s.value = curPeriod; });
           document.querySelectorAll('.ana-custom-wrap').forEach(w => {
-            w.style.display = e.target.value === 'custom' ? 'inline-flex' : 'none';
+            w.style.display = curPeriod === 'custom' ? 'inline-flex' : 'none';
           });
+          document.querySelectorAll('.ana-start').forEach(s => { s.value = curCustomStart; });
+          document.querySelectorAll('.ana-end').forEach(e => { e.value = curCustomEnd; });
           refreshRange();
           App.refreshAll();
         }
-        if (e.target.classList && (e.target.classList.contains('ana-start') || e.target.classList.contains('ana-end'))) {
+        if (e.target.classList && e.target.classList.contains('ana-start')) {
+          curCustomStart = e.target.value;
+          // 同步其他页的输入框（之前只改一个，refreshRange 读的是隐藏 section 的值）
+          document.querySelectorAll('.ana-start').forEach(s => { if (s !== e.target) s.value = curCustomStart; });
+          refreshRange();
+          App.refreshAll();
+        }
+        if (e.target.classList && e.target.classList.contains('ana-end')) {
+          curCustomEnd = e.target.value;
+          document.querySelectorAll('.ana-end').forEach(e => { if (e !== e.target) e.value = curCustomEnd; });
           refreshRange();
           App.refreshAll();
         }
