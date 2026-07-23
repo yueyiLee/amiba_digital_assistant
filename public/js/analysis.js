@@ -527,6 +527,16 @@ const Analysis = (() => {
     $('cashNet').className = 'm-value ' + (net >= 0 ? 'positive' : 'negative');
     $('cashRecv').textContent = money(Math.max(0, totalRecv));
 
+    // 空态引导：当现金收支全为 0 但有应收款时，提示用户去补录
+    const hintEl = $('cashEmptyHint');
+    if (hintEl) {
+      const showHint = cashIn === 0 && cashOut === 0 && totalRecv > 0;
+      hintEl.style.display = showHint ? 'flex' : 'none';
+      if (showHint) {
+        $('cashEmptyHintText').innerHTML = `已挂账 <b>${money(totalRecv)}</b> 应收款。实际已收回来的现金，需要在<b>「收支录入 → 现金收入」</b>里补录一笔，才能反映在「现金收入 / 净现金流 / 月度趋势」中。`;
+      }
+    }
+
     // 月度现金流
     const buckets = {};
     txs.forEach(t => {
@@ -538,7 +548,7 @@ const Analysis = (() => {
     });
     const months = Object.keys(buckets).sort();
     const maxV = Math.max(1, ...months.map(m => Math.max(buckets[m].in, buckets[m].out)));
-    $('cashTrend').innerHTML = months.length === 0 ? '<div class="empty-state">暂无现金流数据</div>' : months.map(m => {
+    $('cashTrend').innerHTML = months.length === 0 ? '<div class="empty-state">📭 还没有任何「现金收入/支出」记录。<br><span style="color:#94a3b8;font-size:12px;">提示：销售挂账后，实际收到回款时需另行录入「现金收入」才能冲减应收。</span></div>' : months.map(m => {
       const b = buckets[m];
       return `<div class="cash-month-row">
         <div class="cash-month-label">${m}</div>

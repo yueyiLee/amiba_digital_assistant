@@ -559,6 +559,14 @@ input:checked + .slider:before { transform: translateX(20px); }
   .alert-kanban { grid-template-columns: 1fr; }
 }
 
+/* 现金分析页空态引导：应收款 > 0 但现金收支 = 0 时提示用户去补录 */
+.cash-empty-hint { display: flex; align-items: center; gap: 12px; padding: 12px 16px; margin: 4px 0 12px; background: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; border-radius: 6px; font-size: 13px; color: #78350f; }
+.cash-empty-hint .ceh-icon { font-size: 18px; flex-shrink: 0; }
+.cash-empty-hint .ceh-body { flex: 1; line-height: 1.6; }
+.cash-empty-hint .ceh-body b { color: #b45309; }
+.cash-empty-hint .ceh-action { padding: 6px 14px; background: #f59e0b; color: #fff; border-radius: 4px; font-weight: 600; text-decoration: none; white-space: nowrap; font-size: 13px; transition: background .2s; }
+.cash-empty-hint .ceh-action:hover { background: #d97706; }
+
 .ana-alert-list { display: flex; flex-direction: column; gap: 8px; }
 .alert-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 6px; border: 1px solid; transition: box-shadow .2s; }
 .alert-item:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
