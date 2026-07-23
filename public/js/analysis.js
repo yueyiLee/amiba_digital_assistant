@@ -109,9 +109,17 @@ const Analysis = (() => {
   }
   function tryFlashOnLoad() {
     if (!pendingFocus) return;
-    // data-anchor 形如 "customer:123" / "cash-net" —— attribute selector 内的冒号是字面字符
+    // 必须在当前活动 section 内查找 —— 否则会被其他隐藏页（如驾驶舱 #topCustomers）
+    // 里同名的 data-anchor 抢先命中，导致 scrollIntoView/高亮作用在不可见元素上
+    const activeSection = document.querySelector('.page-section.active');
+    if (!activeSection) {
+      // 页面还没切换完成（极少见），稍后重试
+      if (focusTries < 40) { focusTries++; setTimeout(tryFlashOnLoad, 80); }
+      else { pendingFocus = null; }
+      return;
+    }
     const sel = `[data-anchor="${pendingFocus}"]`;
-    const el = document.querySelector(sel);
+    const el = activeSection.querySelector(sel);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       el.classList.add('row-flash');
@@ -201,7 +209,7 @@ const Analysis = (() => {
     const topRecv = rows.slice(0, 5);
     const maxRecv = Math.max(1, ...topRecv.map(r => r.recv));
     $('custTopBars').innerHTML = topRecv.map(r => `
-      <div class="ana-bar-row" data-anchor="customer:${r.id}">
+      <div class="ana-bar-row">
         <div class="ana-bar-label">${escapeHtml(r.name)}</div>
         <div class="ana-bar-track"><div class="ana-bar-fill recv" style="width:${(r.recv / maxRecv * 100).toFixed(0)}%"></div></div>
         <div class="ana-bar-val">${money(r.recv)}</div>
@@ -263,7 +271,7 @@ const Analysis = (() => {
     const top = rows.slice(0, 5);
     const max = Math.max(1, ...top.map(r => r.sale));
     $('prodTopBars').innerHTML = top.map(r => `
-      <div class="ana-bar-row" data-anchor="product:${r.id}">
+      <div class="ana-bar-row">
         <div class="ana-bar-label">${escapeHtml(r.name)}</div>
         <div class="ana-bar-track"><div class="ana-bar-fill sale" style="width:${(r.sale / max * 100).toFixed(0)}%"></div></div>
         <div class="ana-bar-val">${money(r.sale)}</div>
