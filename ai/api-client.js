@@ -46,25 +46,42 @@ function request(method, path, opts = {}) {
     }
 
     // 构造模拟请求
-    const bodyStr = opts.body ? JSON.stringify(opts.body) : undefined;
+    // 用 app.handle() 在进程内复用 Express 中间件链（cors / express.json / 路由），
+    // 因此模拟的 req/res 必须提供足够的方法，否则中间件会抛错
+    // （如 cors 调 res.setHeader、express.json 试图从 req 流读 body）。
     const req = {
       method: method.toUpperCase(),
       url,
       path: url,
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': opts.token ? 'Bearer ' + opts.token : '',
+        'content-type': 'application/json',
+        'authorization': opts.token ? 'Bearer ' + opts.token : '',
       },
-      body: bodyStr,
+      // 直接以对象形式携带 body，并标记 _body=true，
+      // 让 express.json / express.urlencoded 中间件跳过流式解析（模拟 req 不是可读流）。
+      body: opts.body,
+      _body: true,
       get(key) { return this.headers[key.toLowerCase()] || this.headers[key]; },
+      header(key) { return this.get(key); },
+      on() {},
+      emit() {},
     };
 
     // 构造模拟响应
     const res = {
       statusCode: 200,
       headers: {},
-      set(key, val) { this.headers[key] = val; },
+      set(key, val) { this.headers[key] = val; return this; },
       get(key) { return this.headers[key.toLowerCase()]; },
+      // Node http.ServerResponse / Express response 上中间件常用方法
+      setHeader(name, value) { this.headers[name] = value; return this; },
+      getHeader(name) { return this.headers[name]; },
+      removeHeader(name) { delete this.headers[name]; },
+      hasHeader(name) { return Object.prototype.hasOwnProperty.call(this.headers, name); },
+      writeHead(statusCode, headers) {
+        this.statusCode = statusCode;
+        if (headers) { for (const k of Object.keys(headers)) this.headers[k] = headers[k]; }
+      },
       status(code) { this.statusCode = code; return this; },
       json(data) {
         resolve({ status: this.statusCode, data });
