@@ -470,7 +470,13 @@ const Analysis = (() => {
     $('expMisc').textContent = money(totalMisc);
 
     // 简单堆叠条形图（CSS）：每月一行
-    $('expTrend').innerHTML = months.length === 0 ? '<div class="empty-state">暂无费用数据</div>' : months.map(m => {
+    const trendLegend = `<div class="trend-legend">
+      <span class="tl-item"><span class="tl-dot" style="background:#3b82f6"></span>材料采购</span>
+      <span class="tl-item"><span class="tl-dot" style="background:#f59e0b"></span>委托加工</span>
+      <span class="tl-item"><span class="tl-dot" style="background:#8b5cf6"></span>杂费支出</span>
+      <span class="tl-item"><span class="tl-dot" style="background:#ef4444"></span>税金</span>
+    </div>`;
+    const trendBody = months.length === 0 ? '<div class="empty-state">暂无费用数据</div>' : months.map(m => {
       const b = buckets[m];
       const t = b.mat + b.proc + b.misc + b.tax;
       return `<div class="exp-month-row">
@@ -484,8 +490,9 @@ const Analysis = (() => {
         <div class="exp-month-val">${money(t)}</div>
       </div>`;
     }).join('');
+    $('expTrend').innerHTML = trendLegend + trendBody;
 
-    // 费用结构环形
+    // 费用结构环形（donut：必须 innerR 才会有"环"的效果，否则只是实心饼）
     const segs = [
       { name: '材料采购', value: totalMat, color: '#3b82f6' },
       { name: '委托加工', value: totalProc, color: '#f59e0b' },
@@ -493,19 +500,22 @@ const Analysis = (() => {
       { name: '税金',     value: totalTax, color: '#ef4444' },
     ].filter(s => s.value > 0);
     const tot = segs.reduce((s, x) => s + x.value, 0) || 1;
-    const c = 70, r = 56, cx = 100, cy = 100;
+    const outerR = 70, innerR = 44, cx = 100, cy = 100;
     let acc = 0;
     const arcs = segs.map(s => {
       const a0 = acc / tot * Math.PI * 2 - Math.PI / 2;
       acc += s.value;
       const a1 = acc / tot * Math.PI * 2 - Math.PI / 2;
       const large = (a1 - a0) > Math.PI ? 1 : 0;
-      const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0);
-      const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
-      return `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${r} ${r} 0 ${large} 1 ${x1.toFixed(1)} ${y1.toFixed(1)}" fill="${s.color}"/>`;
+      // 外环 4 点 + 顺时针外弧 + 顺时针内弧（sweep=0 回到内环另一端）
+      const x0 = cx + outerR * Math.cos(a0), y0 = cy + outerR * Math.sin(a0);
+      const x1 = cx + outerR * Math.cos(a1), y1 = cy + outerR * Math.sin(a1);
+      const x2 = cx + innerR * Math.cos(a1), y2 = cy + innerR * Math.sin(a1);
+      const x3 = cx + innerR * Math.cos(a0), y3 = cy + innerR * Math.sin(a0);
+      return `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${outerR} ${outerR} 0 ${large} 1 ${x1.toFixed(1)} ${y1.toFixed(1)} L${x2.toFixed(1)} ${y2.toFixed(1)} A${innerR} ${innerR} 0 ${large} 0 ${x3.toFixed(1)} ${y3.toFixed(1)} Z" fill="${s.color}"/>`;
     }).join('');
     $('expDonut').innerHTML = `<svg viewBox="0 0 200 200" class="donut-svg">
-      ${arcs || '<circle cx="100" cy="100" r="56" fill="none" stroke="#e2e8f0" stroke-width="28"/>'}
+      ${arcs || '<circle cx="100" cy="100" r="58" fill="none" stroke="#e2e8f0" stroke-width="14"/>'}
       <text x="100" y="96" text-anchor="middle" font-size="11" fill="#64748b">总费用</text>
       <text x="100" y="115" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">${money(tot === 1 ? 0 : tot)}</text>
     </svg>

@@ -647,6 +647,11 @@ input:checked + .slider:before { transform: translateX(20px); }
 .exp-seg.tax { background: #ef4444; }
 .exp-month-val { font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
 
+/* 堆叠图顶部横向图例 */
+.trend-legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 4px 0 8px; border-bottom: 1px dashed #e2e8f0; margin-bottom: 6px; }
+.tl-item { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #475569; }
+.tl-dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
 .donut-svg { display: block; margin: 0 auto 8px; max-width: 200px; }
 .donut-legend { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #475569; }
 .legend-item { display: flex; align-items: center; gap: 6px; }
