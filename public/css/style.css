@@ -521,6 +521,44 @@ input:checked + .slider:before { transform: translateX(20px); }
 .alert-badge.red { background: #fef2f2; color: #b91c1c; }
 .alert-badge.yellow { background: #fefce8; color: #a16207; }
 .alert-badge.green { background: #ecfdf5; color: #047857; }
+
+/* 预警配置按钮（齿轮） */
+.alert-config-btn {
+  font-size: 12px; padding: 5px 12px; border: 1px solid #e2e8f0; background: #fff;
+  color: #475569; border-radius: 6px; cursor: pointer; font-weight: 500;
+  transition: all .15s;
+}
+.alert-config-btn:hover { background: #f8fafc; border-color: #cbd5e1; color: #0f172a; }
+
+/* 预警看板（3 卡片：全部/红/黄） */
+.alert-kanban {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+  margin-bottom: 12px;
+}
+.alert-kanban-card {
+  padding: 14px 16px; border-radius: 8px; cursor: pointer;
+  border: 2px solid #e2e8f0; background: #f8fafc;
+  transition: all .15s; user-select: none;
+  display: flex; flex-direction: column; gap: 4px;
+  min-height: 92px; justify-content: center;
+}
+.alert-kanban-card:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.alert-kanban-card.active { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+.alert-kanban-card.all.active { border-color: #3b82f6; background: #eff6ff; }
+.alert-kanban-card.red.active { border-color: #ef4444; background: #fef2f2; }
+.alert-kanban-card.yellow.active { border-color: #f59e0b; background: #fefce8; }
+.akc-label { font-size: 12px; color: #64748b; font-weight: 500; }
+.alert-kanban-card.all.active .akc-label { color: #1d4ed8; }
+.alert-kanban-card.red.active .akc-label { color: #b91c1c; }
+.alert-kanban-card.yellow.active .akc-label { color: #a16207; }
+.akc-num { font-size: 28px; font-weight: 700; color: #0f172a; line-height: 1.1; }
+.alert-kanban-card.red .akc-num { color: #ef4444; }
+.alert-kanban-card.yellow .akc-num { color: #f59e0b; }
+.akc-hint { font-size: 11px; color: #94a3b8; }
+@media (max-width: 800px) {
+  .alert-kanban { grid-template-columns: 1fr; }
+}
+
 .ana-alert-list { display: flex; flex-direction: column; gap: 8px; }
 .alert-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 6px; border: 1px solid; transition: box-shadow .2s; }
 .alert-item:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
@@ -534,6 +572,34 @@ input:checked + .slider:before { transform: translateX(20px); }
 .alert-sub { font-size: 12px; color: #64748b; margin-top: 2px; }
 .alert-link { font-size: 13px; color: #2563eb; text-decoration: none; font-weight: 500; white-space: nowrap; }
 .alert-link:hover { text-decoration: underline; }
+
+/* 预警配置模态框 - 规则列表 + 表单 */
+.rule-table { font-size: 12px; }
+.rule-table th { background: #f8fafc; color: #64748b; font-weight: 600; padding: 8px 10px; }
+.rule-table td { padding: 10px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+.rule-table code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 11px; color: #475569; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.dot.on { background: #10b981; }
+.dot.off { background: #cbd5e1; }
+
+/* 开关 */
+.switch { position: relative; display: inline-block; width: 36px; height: 20px; vertical-align: middle; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #cbd5e1; border-radius: 20px; transition: .2s; }
+.slider:before { content: ''; position: absolute; height: 16px; width: 16px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: .2s; }
+.switch input:checked + .slider { background: #3b82f6; }
+.switch input:checked + .slider:before { transform: translateX(16px); }
+
+/* 规则编辑表单 */
+.rule-form-row { margin-bottom: 14px; }
+.rule-form-row label { display: block; font-size: 12px; color: #475569; margin-bottom: 6px; font-weight: 500; }
+.rule-form-row .form-input, .rule-form-row .form-select { width: 100%; }
+.rule-form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.rule-form-grid > div { min-width: 0; }
+@media (max-width: 600px) {
+  .rule-form-grid { grid-template-columns: 1fr; }
+}
+.rule-form-row code { background: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 4px; font-size: 11px; }
 
 .ana-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
 @media (max-width: 1000px) { .ana-two-col { grid-template-columns: 1fr; } }

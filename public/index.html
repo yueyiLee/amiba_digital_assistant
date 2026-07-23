@@ -46,7 +46,7 @@
       <div class="nav-group has-sub">
         <div class="nav-item" data-page="analysis" data-toggle="sub"><span class="ni-ic">📈</span><span class="ni-label">经营分析</span><span class="ni-caret">▸</span></div>
         <div class="sub-list">
-          <div class="nav-sub" data-key="analysis-overview"><span class="ni-dot">•</span>分析驾驶舱</div>
+          <div class="nav-sub" data-key="analysis-overview"><span class="ni-dot">•</span>经营总览</div>
           <div class="nav-sub" data-key="analysis-customer"><span class="ni-dot">•</span>客户分析</div>
           <div class="nav-sub" data-key="analysis-product"><span class="ni-dot">•</span>商品分析</div>
           <div class="nav-sub" data-key="analysis-contract"><span class="ni-dot">•</span>合同分析</div>
@@ -238,11 +238,11 @@
       </section>
 
       <!-- ===== 经营分析 ===== -->
-      <!-- 6.0 分析驾驶舱 -->
+      <!-- 6.0 经营总览 -->
       <section class="page-section" id="page-analysis-overview">
         <div class="page-toolbar">
           <div>
-            <div class="page-title">分析驾驶舱</div>
+            <div class="page-title">经营总览</div>
             <div class="page-subtitle">一屏总览本期经营成果与待处理预警</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -268,7 +268,24 @@
         <div class="ana-alert-box">
           <div class="ana-alert-head">
             <span class="ana-alert-title">🚨 经营预警（红/黄）</span>
-            <span id="alertBadge" class="alert-badge">0 红 / 0 黄</span>
+            <button class="alert-config-btn" id="alertConfigBtn">⚙ 预警配置</button>
+          </div>
+          <div class="alert-kanban" id="alertKanban">
+            <div class="alert-kanban-card all active" data-color="all">
+              <div class="akc-label">全部预警</div>
+              <div class="akc-num" id="alertCountAll">0</div>
+              <div class="akc-hint">总预警条数</div>
+            </div>
+            <div class="alert-kanban-card red" data-color="red">
+              <div class="akc-label">🔴 红色预警</div>
+              <div class="akc-num" id="alertCountRed">0</div>
+              <div class="akc-hint">需立即处理</div>
+            </div>
+            <div class="alert-kanban-card yellow" data-color="yellow">
+              <div class="akc-label">🟡 黄色预警</div>
+              <div class="akc-num" id="alertCountYellow">0</div>
+              <div class="akc-hint">需保持关注</div>
+            </div>
           </div>
           <div id="alertList" class="ana-alert-list"></div>
         </div>
@@ -849,6 +866,17 @@
   </div>
 </div>
 
+<!-- ========== 预警配置 Modal（独立，避免占用通用 confirm modal） ========== -->
+<div id="alertConfigOverlay" class="modal-overlay-bg" style="display:none;">
+  <div class="modal-box" style="max-width: 820px;">
+    <div class="modal-header">
+      <h3>⚙ 预警配置</h3>
+      <button class="modal-close" onclick="Analysis.closeAlertConfig()">×</button>
+    </div>
+    <div class="modal-body" id="alertConfigBody" style="padding:0;"></div>
+  </div>
+</div>
+
 <!-- ========== Toast ========== -->
 <div id="toastContainer"></div>
 
@@ -864,7 +892,7 @@
 <script src="js/settings.js?v=20260722a"></script>
 <script src="js/users.js?v=20260722a"></script>
 <script src="js/export.js?v=20260722a"></script>
-<script src="js/analysis.js?v=20260723b"></script>
-<script src="js/app.js?v=20260723b"></script>
+<script src="js/analysis.js?v=20260723c"></script>
+<script src="js/app.js?v=20260723c"></script>
 </body>
 </html>

@@ -14,13 +14,83 @@ const Analysis = (() => {
   let curCustomStart = '';        // 仅当 curPeriod === 'custom' 时使用，'YYYY-MM'
   let curCustomEnd = '';          // 仅当 curPeriod === 'custom' 时使用，'YYYY-MM'
   let curRange = null;            // {start, end, label, granularity} —— 由 curPeriod + curCustomStart/End 计算
-  // 预警阈值（可在驾驶舱页内调整，默认 P0 初版）
-  const TH = {
-    receivableOver: 80000,    // 客户应收超 ¥80,000 触发红
-    receivableWatch: 40000,   // ¥40,000 触发黄
-    grossMarginFloor: 0.15,   // 商品毛利率跌破 15% 红
-    inventoryZeroWarn: 0,     // 库存 0 数量上限不预警
+  // 预警规则（用户可配置，localStorage 持久化）
+  const ALERT_RULES_KEY = 'amiba_alert_rules_v1';
+  const DEFAULT_ALERT_RULES = [
+    { id: 'def-customer-recv-red',    name: '客户大额应收',  scope: 'customer', metric: 'recv',     operator: '>=', threshold: 80000,  threshold2: null, color: 'red',    message: '超过预警阈值，建议立即跟进回款',     enabled: true },
+    { id: 'def-customer-recv-yellow', name: '客户中等应收',  scope: 'customer', metric: 'recv',     operator: '>=', threshold: 40000,  threshold2: null, color: 'yellow', message: '需保持关注',                          enabled: true },
+    { id: 'def-product-margin',       name: '商品毛利率过低', scope: 'product', metric: 'margin',   operator: '<',  threshold: 0.15,   threshold2: null, color: 'red',    message: '毛利率跌破健康线',                    enabled: true },
+    { id: 'def-product-stock',        name: '商品库存呆滞',  scope: 'product', metric: 'stockAge', operator: '>',  threshold: 60,     threshold2: null, color: 'yellow', message: '建议盘点/促销/调拨',                  enabled: true },
+    { id: 'def-cash-gap',             name: '净现金流缺口',  scope: 'cash',    metric: 'netCash',  operator: '<',  threshold: -20000, threshold2: null, color: 'red',    message: '现金缺口较大，关注回款',              enabled: true },
+  ];
+  // 范围/指标/比较符的合法组合（用于配置表单的级联下拉）
+  const SCOPE_META = {
+    customer: { label: '客户', metrics: {
+      recv: { label: '应收金额', unit: '元', operators: ['>=', '<=', '>', '<'] }
+    }},
+    product: { label: '商品', metrics: {
+      margin:   { label: '毛利率',  unit: '0-1', operators: ['<', '<='] },
+      stockAge: { label: '库存呆滞天数', unit: '天', operators: ['>', '>='] }
+    }},
+    cash: { label: '现金流', metrics: {
+      netCash: { label: '净现金流', unit: '元', operators: ['<', '<=', '>', '>='] }
+    }}
   };
+  // 当前预警筛选（看板点击切换）：'all' | 'red' | 'yellow'
+  let curAlertFilter = 'all';
+  // 模态框内部状态
+  let configEditingId = null; // null = 列表态；'new' = 新增；'rule-id' = 编辑某条
+
+  function loadAlertRules() {
+    try {
+      const raw = localStorage.getItem(ALERT_RULES_KEY);
+      // 存在 localStorage key 即视为"已配置"（即使空数组也尊重用户选择）
+      // 仅有"key 不存在"或"JSON 损坏"时才用默认
+      if (raw !== null) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) return arr;
+      }
+    } catch (e) { /* 损坏的 JSON 当作无 */ }
+    return JSON.parse(JSON.stringify(DEFAULT_ALERT_RULES));
+  }
+  function saveAlertRules(rules) {
+    localStorage.setItem(ALERT_RULES_KEY, JSON.stringify(rules));
+  }
+  function genRuleId() {
+    return 'r-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+  }
+  // 评价一条数值是否命中规则
+  function compare(v, op, t) {
+    if (op === '>=') return v >= t;
+    if (op === '<=') return v <= t;
+    if (op === '>')  return v > t;
+    if (op === '<')  return v < t;
+    if (op === '==') return v === t;
+    return false;
+  }
+  // 把 number 安全转成"对当前 metric 的显示串"
+  function fmtMetricValue(v, metric) {
+    if (metric === 'margin') return (v * 100).toFixed(1) + '%';
+    if (metric === 'stockAge') return Math.floor(v) + ' 天';
+    return '¥' + Math.round(v).toLocaleString();
+  }
+  // 从当前 active rules 提取"客户应收"红/黄阈值（用于明细表的状态徽章）
+  function getCustomerRecvThresholds() {
+    const rules = loadAlertRules().filter(r => r.enabled && r.scope === 'customer' && r.metric === 'recv');
+    const red = rules.filter(r => r.color === 'red').reduce((m, r) => Math.max(m, r.threshold), 0);
+    const yellow = rules.filter(r => r.color === 'yellow').reduce((m, r) => Math.max(m, r.threshold), 0);
+    return { red, yellow };
+  }
+  // 从当前 active rules 提取"商品毛利率"红阈值
+  function getProductMarginThreshold() {
+    const rules = loadAlertRules().filter(r => r.enabled && r.scope === 'product' && r.metric === 'margin');
+    if (rules.length === 0) return 0.15; // fallback
+    return rules.filter(r => r.color === 'red').reduce((m, r) => Math.min(m, r.threshold), Infinity);
+  }
+  // 是否有"商品零库存"规则启用
+  function hasZeroStockRule() {
+    return loadAlertRules().some(r => r.enabled && r.scope === 'product' && r.metric === 'stockZero');
+  }
 
   // 复用看板时间范围
   function getRange() {
@@ -29,70 +99,104 @@ const Analysis = (() => {
   }
 
   // ========== 1. 经营预警检测 ==========
-  // 预警项 schema: { level:'red'|'yellow', kind:'customer'|'product'|'contract'|'cash', key, title, sub, jumpTo, jumpAnchor }
+  // 数据驱动：每条 active rule 都会参与检测，匹配产生一条 alert
+  // 预警项 schema: { level, kind, key, title, sub, jumpTo, jumpAnchor }
   function detectAlerts() {
     const txs = Storage.getTransactionsSync({ unit: curUnit, startDate: getRange().start, endDate: getRange().end });
     const customers = Storage.getCustomersSync();
+    const products = Storage.getProductsSync();
     const inventory = Storage.getInventorySync();
+    const rules = loadAlertRules().filter(r => r.enabled);
     const alerts = [];
 
-    // 1) 客户应收超期（按"销售-现金"按客户汇总）
+    // 预计算公共上下文
+    // 客户应收（按客户汇总：销售 - 现金回款）
     const recvByCustomer = {};
     txs.forEach(t => {
       if (!t.customer_id) return;
       if (t.type === '销售收入') recvByCustomer[t.customer_id] = (recvByCustomer[t.customer_id] || 0) + num0(t.amount);
       if (t.type === '现金收入') recvByCustomer[t.customer_id] = (recvByCustomer[t.customer_id] || 0) - num0(t.amount);
     });
-    Object.keys(recvByCustomer).forEach(cid => {
-      const ar = recvByCustomer[cid];
-      if (ar < TH.receivableWatch) return;
-      const c = customers.find(x => String(x.id) === String(cid));
-      if (!c) return;
-      if (ar >= TH.receivableOver) {
-        alerts.push({ level: 'red', kind: 'customer', key: cid, title: `客户【${c.name}】应收 ¥${Math.round(ar).toLocaleString()}`,
-          sub: '超过预警阈值，建议立即跟进回款', jumpTo: 'analysis-customer', jumpAnchor: `customer:${cid}` });
-      } else {
-        alerts.push({ level: 'yellow', kind: 'customer', key: cid, title: `客户【${c.name}】应收 ¥${Math.round(ar).toLocaleString()}`,
-          sub: '需保持关注', jumpTo: 'analysis-customer', jumpAnchor: `customer:${cid}` });
-      }
-    });
-
-    // 2) 商品类预警（用真实流水口径：销售收入 - 该商品材料采购 = 毛利）
-    //    —— 之前用 products[].price/avg_cost 在真实数据中常为空，导致商品预警永远不触发
+    // 商品销售/成本/毛利率（用真实流水口径）
     const productRows = buildProductMetrics();
-    productRows.forEach(r => {
-      if (r.sale > 0 && r.gm < TH.grossMarginFloor) {
-        alerts.push({ level: 'red', kind: 'product', key: r.id, title: `商品【${r.name}】毛利率 ${(r.gm * 100).toFixed(1)}%`,
-          sub: `跌破 15% 警戒线（销售 ¥${Math.round(r.sale).toLocaleString()} / 成本 ¥${Math.round(r.cost).toLocaleString()}）`,
-          jumpTo: 'analysis-product', jumpAnchor: `product:${r.id}` });
-      }
-      if (r.sale > 0 && r.qty === 0) {
-        alerts.push({ level: 'yellow', kind: 'product', key: r.id, title: `商品【${r.name}】零库存`,
-          sub: '本期有销售但当前库存为 0', jumpTo: 'analysis-product', jumpAnchor: `product:${r.id}` });
-      }
-    });
-
-    // 3) 库存呆滞：60 天以上无出入库（用 updated_at 粗判）
-    const now = Date.now();
-    inventory.forEach(i => {
-      const qty = num0(i.quantity);
-      if (qty > 0 && i.updated_at) {
-        const days = (now - new Date(i.updated_at).getTime()) / 86400000;
-        if (days > 60) {
-          alerts.push({ level: 'yellow', kind: 'product', key: i.product_id, title: `商品【${i.product_name}】库存呆滞 ${Math.floor(days)} 天`,
-            sub: '建议盘点/促销/调拨', jumpTo: 'analysis-product', jumpAnchor: `product:${i.product_id}` });
-        }
-      }
-    });
-
-    // 4) 资金类：净现金流为负
+    // 现金流入流出
     const cashIn = txs.filter(t => t.type === '现金收入').reduce((s, t) => s + num0(t.amount), 0);
     const cashOut = txs.filter(t => t.type === '现金支出').reduce((s, t) => s + Math.abs(num0(t.amount)), 0);
-    if (cashOut > cashIn && (cashOut - cashIn) > 20000) {
-      alerts.push({ level: 'red', kind: 'cash', key: 'net', title: `净现金流缺口 ¥${Math.round(cashOut - cashIn).toLocaleString()}`,
-        sub: '现金支出持续大于现金收入', jumpTo: 'analysis-cash', jumpAnchor: 'cash-net' });
-    }
 
+    rules.forEach(rule => {
+      // 1) 客户应收类（per-customer）
+      if (rule.scope === 'customer' && rule.metric === 'recv') {
+        Object.keys(recvByCustomer).forEach(cid => {
+          const ar = recvByCustomer[cid];
+          if (!compare(ar, rule.operator, rule.threshold)) return;
+          const c = customers.find(x => String(x.id) === String(cid));
+          if (!c) return;
+          alerts.push({
+            level: rule.color, kind: 'customer', key: cid, _ruleId: rule.id,
+            title: `客户【${c.name}】应收 ${fmtMetricValue(ar, 'recv')}`,
+            sub: rule.message,
+            jumpTo: 'analysis-customer', jumpAnchor: `customer:${cid}`
+          });
+        });
+      }
+      // 2) 商品毛利率类（per-product）
+      else if (rule.scope === 'product' && rule.metric === 'margin') {
+        productRows.forEach(r => {
+          if (r.sale <= 0) return; // 没销售不算
+          if (!compare(r.gm, rule.operator, rule.threshold)) return;
+          alerts.push({
+            level: rule.color, kind: 'product', key: r.id, _ruleId: rule.id,
+            title: `商品【${r.name}】毛利率 ${fmtMetricValue(r.gm, 'margin')}`,
+            sub: rule.message,
+            jumpTo: 'analysis-product', jumpAnchor: `product:${r.id}`
+          });
+        });
+      }
+      // 3) 商品库存呆滞类（per-product，按 inventory 行）
+      else if (rule.scope === 'product' && rule.metric === 'stockAge') {
+        const now = Date.now();
+        inventory.forEach(i => {
+          const qty = num0(i.quantity);
+          if (qty <= 0 || !i.updated_at) return;
+          const days = (now - new Date(i.updated_at).getTime()) / 86400000;
+          if (!compare(days, rule.operator, rule.threshold)) return;
+          alerts.push({
+            level: rule.color, kind: 'product', key: i.product_id, _ruleId: rule.id,
+            title: `商品【${i.product_name}】库存呆滞 ${Math.floor(days)} 天`,
+            sub: rule.message,
+            jumpTo: 'analysis-product', jumpAnchor: `product:${i.product_id}`
+          });
+        });
+      }
+      // 4) 净现金流类（aggregate）
+      else if (rule.scope === 'cash' && rule.metric === 'netCash') {
+        const net = cashIn - cashOut;
+        if (compare(net, rule.operator, rule.threshold)) {
+          alerts.push({
+            level: rule.color, kind: 'cash', key: 'net', _ruleId: rule.id,
+            title: `净现金流 ${fmtMetricValue(net, 'netCash')}`,
+            sub: rule.message,
+            jumpTo: 'analysis-cash', jumpAnchor: 'cash-net'
+          });
+        }
+      }
+      // 5) 商品零库存（per-product，metric='stockZero'，operator 无意义）
+      else if (rule.scope === 'product' && rule.metric === 'stockZero') {
+        productRows.forEach(r => {
+          if (r.sale > 0 && r.qty === 0) {
+            alerts.push({
+              level: rule.color, kind: 'product', key: r.id, _ruleId: rule.id,
+              title: `商品【${r.name}】零库存`,
+              sub: rule.message,
+              jumpTo: 'analysis-product', jumpAnchor: `product:${r.id}`
+            });
+          }
+        });
+      }
+    });
+
+    // 稳定排序：红 → 黄；同色按标题
+    alerts.sort((a, b) => (a.level === b.level ? 0 : a.level === 'red' ? -1 : 1));
     return alerts;
   }
 
@@ -207,10 +311,11 @@ const Analysis = (() => {
       </div>`).join('') || '<div class="empty-state">暂无客户应收数据</div>';
 
     // 明细表
+    const { red: recvRed, yellow: recvYellow } = getCustomerRecvThresholds();
     $('custTable').innerHTML = `<thead><tr><th>客户</th><th>类型</th><th>销售额</th><th>回款</th><th>应收</th><th>最近交易</th><th>状态</th></tr></thead>
       <tbody>${rows.map(r => {
-        const stat = r.recv >= 80000 ? '<span class="badge red">应收预警</span>'
-                    : r.recv >= 40000 ? '<span class="badge yellow">关注</span>'
+        const stat = r.recv >= recvRed && recvRed > 0 ? '<span class="badge red">应收预警</span>'
+                    : r.recv >= recvYellow && recvYellow > 0 ? '<span class="badge yellow">关注</span>'
                     : '<span class="badge gray">正常</span>';
         return `<tr data-anchor="customer:${r.id}">
           <td>${escapeHtml(r.name)}</td>
@@ -269,10 +374,12 @@ const Analysis = (() => {
       </div>`).join('') || '<div class="empty-state">暂无商品销售数据</div>';
 
     // 明细表
+    const marginTh = getProductMarginThreshold();
+    const showZeroStock = hasZeroStockRule();
     $('prodTable').innerHTML = `<thead><tr><th>商品</th><th>分类</th><th>销售额</th><th>成本</th><th>毛利率</th><th>库存量</th><th>库存价值</th><th>状态</th></tr></thead>
       <tbody>${rows.map(r => {
-        const stat = r.gm < 0.15 && r.sale > 0 ? '<span class="badge red">毛利跌破</span>'
-                    : r.qty === 0 && r.sale > 0 ? '<span class="badge yellow">零库存</span>'
+        const stat = r.gm < marginTh && r.sale > 0 ? '<span class="badge red">毛利跌破</span>'
+                    : r.qty === 0 && r.sale > 0 && showZeroStock ? '<span class="badge yellow">零库存</span>'
                     : '<span class="badge gray">正常</span>';
         return `<tr data-anchor="product:${r.id}">
           <td>${escapeHtml(r.name)}</td>
@@ -474,7 +581,7 @@ const Analysis = (() => {
     }).join('');
   }
 
-  // ========== 9. 驾驶舱 ==========
+  // ========== 9. 经营总览 ==========
   function renderOverview() {
     const m = Calculator.calculateMetrics(curUnit, getRange());
     $('anaSales').textContent = money(m.salesIncome);
@@ -486,21 +593,8 @@ const Analysis = (() => {
 
     // 预警区
     const alerts = detectAlerts();
-    const redN = alerts.filter(a => a.level === 'red').length;
-    const yelN = alerts.filter(a => a.level === 'yellow').length;
-    $('alertBadge').textContent = `${redN} 红 / ${yelN} 黄`;
-    $('alertBadge').className = 'alert-badge ' + (redN > 0 ? 'red' : yelN > 0 ? 'yellow' : 'green');
-    $('alertList').innerHTML = alerts.length === 0
-      ? '<div class="empty-state">🎉 当前没有需要关注的预警</div>'
-      : alerts.map(a => `
-        <div class="alert-item ${a.level}">
-          <span class="alert-dot"></span>
-          <div class="alert-body">
-            <div class="alert-title">${escapeHtml(a.title)}</div>
-            <div class="alert-sub">${escapeHtml(a.sub)}</div>
-          </div>
-          <a class="alert-link" href="javascript:void(0)" data-jump="${a.jumpTo}" data-anchor="${escapeHtml(a.jumpAnchor)}">查看 →</a>
-        </div>`).join('');
+    renderAlertKanban(alerts);
+    renderAlertList(alerts);
 
     // Top 5 客户（按应收）
     const custRows = buildCustomerMetrics().slice(0, 5);
@@ -521,6 +615,260 @@ const Analysis = (() => {
         <td class="amt pos">${money(p.sale)}</td>
         <td>${(p.gm * 100).toFixed(1)}%</td>
       </tr>`).join('')}</tbody></table>`;
+  }
+
+  // ========== 9.1 预警看板（3 卡片：全部 / 红色 / 黄色） ==========
+  function renderAlertKanban(alerts) {
+    const redN = alerts.filter(a => a.level === 'red').length;
+    const yelN = alerts.filter(a => a.level === 'yellow').length;
+    $('alertCountAll').textContent = alerts.length;
+    $('alertCountRed').textContent = redN;
+    $('alertCountYellow').textContent = yelN;
+    // 高亮当前筛选卡片
+    document.querySelectorAll('#alertKanban .alert-kanban-card').forEach(c => {
+      c.classList.toggle('active', c.dataset.color === curAlertFilter);
+    });
+  }
+
+  // ========== 9.2 预警列表（按 curAlertFilter 过滤） ==========
+  function renderAlertList(alerts) {
+    const list = curAlertFilter === 'all' ? alerts : alerts.filter(a => a.level === curAlertFilter);
+    $('alertList').innerHTML = list.length === 0
+      ? '<div class="empty-state">🎉 当前没有需要关注的预警</div>'
+      : list.map(a => `
+        <div class="alert-item ${a.level}">
+          <span class="alert-dot"></span>
+          <div class="alert-body">
+            <div class="alert-title">${escapeHtml(a.title)}</div>
+            <div class="alert-sub">${escapeHtml(a.sub)}</div>
+          </div>
+          <a class="alert-link" href="javascript:void(0)" data-jump="${a.jumpTo}" data-anchor="${escapeHtml(a.jumpAnchor)}">查看 →</a>
+        </div>`).join('');
+  }
+
+  // 点击看板切换筛选（在 bind 中委托到 document）
+  function setAlertFilter(color) {
+    curAlertFilter = color;
+    document.querySelectorAll('#alertKanban .alert-kanban-card').forEach(c => {
+      c.classList.toggle('active', c.dataset.color === color);
+    });
+    renderAlertList(detectAlerts());
+  }
+
+  // ========== 9.3 预警配置模态框 ==========
+  function openAlertConfig() {
+    configEditingId = null;
+    $('alertConfigOverlay').style.display = 'flex';
+    renderConfigList();
+  }
+  function closeAlertConfig() {
+    $('alertConfigOverlay').style.display = 'none';
+    configEditingId = null;
+  }
+  // 列表态：所有规则的表格
+  function renderConfigList() {
+    const rules = loadAlertRules();
+    configEditingId = null;
+    const html = `
+      <div style="padding:16px 20px 0;">
+        <div style="font-size:12px;color:#64748b;margin-bottom:8px;">配置预警规则后，预警区与本页所有状态徽章会即时更新</div>
+        <table class="data-table rule-table">
+          <thead><tr>
+            <th style="width:90px;">状态</th>
+            <th>名称</th>
+            <th style="width:110px;">范围</th>
+            <th style="width:180px;">条件</th>
+            <th style="width:80px;">颜色</th>
+            <th style="width:80px;">启用</th>
+            <th style="width:130px;">操作</th>
+          </tr></thead>
+          <tbody>
+            ${rules.length === 0 ? '<tr><td colspan="7" class="empty-state">还没有任何预警条件，点击下方按钮新增</td></tr>'
+              : rules.map(r => {
+                const scopeLabel = SCOPE_META[r.scope] ? SCOPE_META[r.scope].label : r.scope;
+                const metricLabel = SCOPE_META[r.scope] && SCOPE_META[r.scope].metrics[r.metric]
+                  ? SCOPE_META[r.scope].metrics[r.metric].label : r.metric;
+                const condText = r.metric === 'stockZero'
+                  ? '本期有销售但当前库存 = 0'
+                  : `${metricLabel} ${r.operator} ${r.metric === 'margin' ? (r.threshold * 100).toFixed(0) + '%' : r.threshold.toLocaleString()}`;
+                return `<tr>
+                  <td><span class="dot ${r.enabled ? 'on' : 'off'}"></span>${r.enabled ? '已启用' : '已停用'}</td>
+                  <td><strong>${escapeHtml(r.name)}</strong></td>
+                  <td>${scopeLabel} / ${metricLabel}</td>
+                  <td><code>${escapeHtml(condText)}</code></td>
+                  <td><span class="alert-dot" style="background:${r.color === 'red' ? '#ef4444' : '#f59e0b'}"></span>${r.color === 'red' ? '红' : '黄'}</td>
+                  <td><label class="switch"><input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="Analysis.toggleRule('${r.id}', this.checked)"><span class="slider"></span></label></td>
+                  <td>
+                    <button class="btn btn-secondary btn-sm" onclick="Analysis.openRuleForm('${r.id}')">编辑</button>
+                    <button class="btn btn-secondary btn-sm" style="color:#dc2626;" onclick="Analysis.confirmDeleteRule('${r.id}')">删除</button>
+                  </td>
+                </tr>`;
+              }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="padding:14px 20px;border-top:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:center;background:#f8fafc;">
+        <span style="font-size:12px;color:#94a3b8;">共 ${rules.length} 条规则</span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-secondary" onclick="Analysis.closeAlertConfig()">关闭</button>
+          <button class="btn btn-primary" onclick="Analysis.openRuleForm('new')">+ 新增预警条件</button>
+        </div>
+      </div>`;
+    $('alertConfigBody').innerHTML = html;
+  }
+
+  // 表单态：编辑/新增
+  function openRuleForm(idOrNew) {
+    const rules = loadAlertRules();
+    const isNew = idOrNew === 'new';
+    const r = isNew
+      ? { id: '', name: '', scope: 'customer', metric: 'recv', operator: '>=', threshold: 0, color: 'red', message: '', enabled: true }
+      : rules.find(x => x.id === idOrNew);
+    if (!r) { App.toast('未找到该规则', 'error'); return; }
+    configEditingId = isNew ? 'new' : r.id;
+
+    const scopeOptions = Object.keys(SCOPE_META).map(k =>
+      `<option value="${k}" ${k === r.scope ? 'selected' : ''}>${SCOPE_META[k].label}</option>`).join('');
+    const html = `
+      <div style="padding:18px 20px;">
+        <div style="font-size:12px;color:#64748b;margin-bottom:14px;">${isNew ? '新增预警条件' : '编辑预警条件'}</div>
+        <form id="ruleForm" onsubmit="return false;">
+          <div class="rule-form-row">
+            <label>名称 <span style="color:#dc2626;">*</span></label>
+            <input class="form-input" name="name" required value="${escapeHtml(r.name)}" placeholder="例：客户大额应收">
+          </div>
+          <div class="rule-form-row rule-form-grid">
+            <div>
+              <label>范围</label>
+              <select class="form-select" name="scope" id="ruleScopeSel" onchange="Analysis.onRuleScopeChange()">${scopeOptions}</select>
+            </div>
+            <div>
+              <label>指标</label>
+              <select class="form-select" name="metric" id="ruleMetricSel"></select>
+            </div>
+            <div>
+              <label>比较符</label>
+              <select class="form-select" name="operator" id="ruleOpSel"></select>
+            </div>
+          </div>
+          <div class="rule-form-row" id="ruleThWrap">
+            <label>阈值 <span id="ruleThUnit" style="color:#94a3b8;font-weight:normal;"></span></label>
+            <input class="form-input" name="threshold" type="number" step="any" value="${r.threshold}" placeholder="数字">
+          </div>
+          <div class="rule-form-row">
+            <label>颜色</label>
+            <div style="display:flex;gap:12px;align-items:center;">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="radio" name="color" value="red" ${r.color === 'red' ? 'checked' : ''}>
+                <span class="alert-dot" style="background:#ef4444;"></span> 红色（需立即处理）
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="radio" name="color" value="yellow" ${r.color === 'yellow' ? 'checked' : ''}>
+                <span class="alert-dot" style="background:#f59e0b;"></span> 黄色（需保持关注）
+              </label>
+            </div>
+          </div>
+          <div class="rule-form-row">
+            <label>消息模板</label>
+            <input class="form-input" name="message" value="${escapeHtml(r.message)}" placeholder="例：超过预警阈值，建议立即跟进回款">
+          </div>
+          <div class="rule-form-row">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="checkbox" name="enabled" ${r.enabled ? 'checked' : ''}> 启用此规则
+            </label>
+          </div>
+        </form>
+      </div>
+      <div style="padding:14px 20px;border-top:1px solid #f1f5f9;display:flex;justify-content:flex-end;gap:8px;background:#f8fafc;">
+        <button class="btn btn-secondary" onclick="Analysis.renderConfigList()">返回列表</button>
+        <button class="btn btn-primary" onclick="Analysis.saveRuleForm()">保存</button>
+      </div>`;
+    $('alertConfigBody').innerHTML = html;
+    onRuleScopeChange();
+  }
+
+  // scope 切换时，重建 metric/operator 下拉
+  function onRuleScopeChange() {
+    const scope = $('ruleScopeSel').value;
+    const cur = loadAlertRules().find(x => x.id === configEditingId) || { metric: 'recv', operator: '>=' };
+    // 仍尝试从当前 form 取已选 metric（用户中途改 scope 时保留其选择）
+    const existingMetric = $('ruleMetricSel').value;
+    const existingOp = $('ruleOpSel').value;
+    const metrics = SCOPE_META[scope] ? Object.keys(SCOPE_META[scope].metrics) : [];
+    const metricKey = metrics.includes(existingMetric) ? existingMetric : (metrics.includes(cur.metric) ? cur.metric : metrics[0]);
+    $('ruleMetricSel').innerHTML = metrics.map(m =>
+      `<option value="${m}" ${m === metricKey ? 'selected' : ''}>${SCOPE_META[scope].metrics[m].label}</option>`).join('');
+    onRuleMetricChange();
+  }
+  function onRuleMetricChange() {
+    const scope = $('ruleScopeSel').value;
+    const metric = $('ruleMetricSel').value;
+    const meta = SCOPE_META[scope] && SCOPE_META[scope].metrics[metric];
+    if (!meta) return;
+    const cur = loadAlertRules().find(x => x.id === configEditingId) || { operator: meta.operators[0] };
+    const existingOp = $('ruleOpSel').value;
+    const op = meta.operators.includes(existingOp) ? existingOp : (meta.operators.includes(cur.operator) ? cur.operator : meta.operators[0]);
+    $('ruleOpSel').innerHTML = meta.operators.map(o =>
+      `<option value="${o}" ${o === op ? 'selected' : ''}>${o}</option>`).join('');
+    $('ruleThUnit').textContent = meta.unit === '0-1' ? '（0~1 之间的比例，如 0.15 = 15%）' : meta.unit;
+    // stockZero 类型隐藏阈值
+    $('ruleThWrap').style.display = metric === 'stockZero' ? 'none' : '';
+  }
+  // 暴露给 scope select 的 onchange
+  window._analysisRuleScopeChange = onRuleScopeChange;
+  window._analysisRuleMetricChange = onRuleMetricChange;
+
+  function saveRuleForm() {
+    const form = $('ruleForm');
+    if (!form) return;
+    const fd = new FormData(form);
+    const name = (fd.get('name') || '').toString().trim();
+    if (!name) { App.toast('请填写名称', 'warn'); return; }
+    const scope = fd.get('scope').toString();
+    const metric = fd.get('metric').toString();
+    const operator = fd.get('operator').toString();
+    let threshold = parseFloat(fd.get('threshold'));
+    if (isNaN(threshold) && metric !== 'stockZero') { App.toast('请填写有效阈值', 'warn'); return; }
+    if (metric === 'stockZero') threshold = 0;
+    const color = fd.get('color').toString();
+    const message = (fd.get('message') || '').toString().trim() || '需要关注';
+    const enabled = !!fd.get('enabled');
+
+    const rules = loadAlertRules();
+    if (configEditingId === 'new') {
+      rules.push({ id: genRuleId(), name, scope, metric, operator, threshold, threshold2: null, color, message, enabled });
+      App.toast('已新增预警条件', 'success');
+    } else {
+      const idx = rules.findIndex(r => r.id === configEditingId);
+      if (idx === -1) { App.toast('规则不存在', 'error'); return; }
+      rules[idx] = { ...rules[idx], name, scope, metric, operator, threshold, color, message, enabled };
+      App.toast('已保存', 'success');
+    }
+    saveAlertRules(rules);
+    renderConfigList();
+    App.refreshAll();
+  }
+
+  function toggleRule(id, enabled) {
+    const rules = loadAlertRules();
+    const r = rules.find(x => x.id === id);
+    if (!r) return;
+    r.enabled = !!enabled;
+    saveAlertRules(rules);
+    App.refreshAll();
+  }
+
+  function confirmDeleteRule(id) {
+    const rules = loadAlertRules();
+    const r = rules.find(x => x.id === id);
+    if (!r) return;
+    App.openModal('删除预警条件', `确定删除 <strong>${escapeHtml(r.name)}</strong> 吗？此操作不可撤销。`, async () => {
+      saveAlertRules(rules.filter(x => x.id !== id));
+      App.toast('已删除', 'success');
+      App.closeModal();
+      renderConfigList();
+      App.refreshAll();
+    });
   }
 
   // ========== 10. 入口 ==========
@@ -574,6 +922,27 @@ const Analysis = (() => {
           refreshRange();
           App.refreshAll();
         }
+        // 预警配置：表单内的 scope/metric 切换（用 onchange 触发，但在委托里也兜底）
+        if (e.target && e.target.id === 'ruleScopeSel') onRuleScopeChange();
+        if (e.target && e.target.id === 'ruleMetricSel') onRuleMetricChange();
+      });
+      // 预警看板点击（事件委托，避开数据变化重渲染导致的 listener 丢失）
+      document.addEventListener('click', (e) => {
+        const card = e.target.closest && e.target.closest('.alert-kanban-card');
+        if (card && card.dataset && card.dataset.color) {
+          setAlertFilter(card.dataset.color);
+          return;
+        }
+        // 预警配置按钮
+        if (e.target && e.target.id === 'alertConfigBtn') {
+          openAlertConfig();
+          return;
+        }
+        // 预警遮罩点击关闭
+        if (e.target && e.target.id === 'alertConfigOverlay') {
+          closeAlertConfig();
+          return;
+        }
       });
     }
   }
@@ -587,6 +956,8 @@ const Analysis = (() => {
   return {
     bind, syncFilters, consumeFocus, tryFlashOnLoad, flashRow,
     renderOverview, renderCustomer, renderProduct, renderContract, renderExpense, renderCash,
+    openAlertConfig, closeAlertConfig, renderConfigList, openRuleForm, saveRuleForm, toggleRule, confirmDeleteRule,
+    setAlertFilter, onRuleScopeChange, onRuleMetricChange, loadAlertRules, saveAlertRules,
     get unit() { return curUnit; }, setUnit(v) { curUnit = v; }
   };
 })();
