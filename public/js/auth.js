@@ -51,8 +51,8 @@ const Auth = (() => {
     // 渲染用户信息
     const u = currentUser;
     document.getElementById('userDisplayName').textContent = u.display_name || u.username;
-    // admin 为平台系统管理员；其他账号在自己数据范围内为管理员
-    document.getElementById('userRoleTag').textContent = isAdmin() ? '系统管理员' : '管理员';
+    // 顶栏账号名旁边显示绑定的企业名称（去掉角色标识，不再区分录入员/管理员）
+    document.getElementById('userCompanyName').textContent = u.company_name || '';
     // 「账号管理」仅对 admin 超级账号可见（默认由 CSS 隐藏，此处显式展开）
     document.querySelectorAll('.admin-only').forEach(el => { el.style.display = isAdmin() ? 'flex' : 'none'; });
   }

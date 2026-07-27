@@ -322,7 +322,7 @@ const Analysis = (() => {
           <td>${escapeHtml(r.type)}</td>
           <td class="amt pos">${money(r.sale)}</td>
           <td class="amt pos">${money(r.cash)}</td>
-          <td class="amt ${r.recv > 0 ? 'neg' : ''}">${money(r.recv)}</td>
+          <td class="amt ${r.recv > 0 ? 'recv-amt' : ''}">${money(r.recv)}</td>
           <td>${r.lastDate || '—'}</td>
           <td>${stat}</td>
         </tr>`;
@@ -620,6 +620,15 @@ const Analysis = (() => {
     $('anaAdded').textContent = money(m.addedValue);
     $('anaUnitAdded').textContent = Currency.fmtRate(m.unitAddedValue);
     $('anaExpense').textContent = money(m.totalExpense);
+
+    // 经营总览 KPI 按「涨红跌绿」上色：收入/利润红、支出绿、应收橙（与小程序一致）
+    const colUp = '#E5484D', colDown = '#16A34A', colWarn = '#F59E0B';
+    $('anaSales').style.color = colUp;
+    $('anaRecv').style.color = colWarn;
+    $('anaExpense').style.color = colDown;
+    $('anaProfit').style.color = m.profit >= 0 ? colUp : colDown;
+    $('anaAdded').style.color = m.addedValue >= 0 ? colUp : colDown;
+    $('anaUnitAdded').style.color = m.unitAddedValue >= 0 ? colUp : colDown;
 
     // 预警区
     const alerts = detectAlerts();

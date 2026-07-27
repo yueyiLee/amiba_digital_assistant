@@ -15,6 +15,15 @@ const hasCloudCreds = !!(
   process.env.TENCENTCLOUD_SECRETID &&
   process.env.TENCENTCLOUD_SECRETKEY
 );
+
+// 若显式配置了外部 PG 地址（非内置模板占位），一律走 pg 原生直连。
+// 这样 SCF Web 函数与云托管容器都能复用已开启公网访问的 PostgreSQL，
+// 不再强依赖 @cloudbase/manager-node（executePGSql 网关路径），部署包可大幅瘦身。
+const DIRECT_PG = !!(
+  process.env.PG_HOST &&
+  process.env.PG_HOST !== '{{envId}}.pg.rdb.cloud.tencent.com' &&
+  process.env.PG_HOST.indexOf('rdb.cloud.tencent.com') === -1
+);
 const ENV = process.env.SCF_NAMESPACE || process.env.TCB_ENV || 'amiba-d3gk34ae899822073';
 
 // ===== 初始化状态（供 /api/health 暴露，无需 CLS 也能观测）=====
@@ -150,7 +159,7 @@ function bind(text, params) {
 }
 
 async function query(text, params) {
-  if (cloudApp || hasCloudCreds) {
+  if (!DIRECT_PG && (cloudApp || hasCloudCreds)) {
     const res = await cloudQuery(bind(text, params));
     return adapt(res);
   }
@@ -163,7 +172,7 @@ async function query(text, params) {
 // 云端模式自动拆为两步：先 INSERT（去掉 RETURNING），再 SELECT 最新 id。
 // 本地 pg 模式行为不变，透传原始 SQL。
 async function insertReturning(text, params) {
-  if (cloudApp || hasCloudCreds) {
+  if (!DIRECT_PG && (cloudApp || hasCloudCreds)) {
     const insertPart = text.replace(/\s+RETURNING\s+.*$/i, '');
     await cloudQuery(bind(insertPart, params));
     const tableMatch = insertPart.match(/INTO\s+(\w+)/i);
@@ -192,6 +201,7 @@ const INIT_TABLES_SQL = `
     password_hash TEXT NOT NULL,
     display_name TEXT DEFAULT '',
     role TEXT DEFAULT 'viewer',
+    company_name TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ DEFAULT NOW()
   );
 
@@ -533,6 +543,19 @@ async function ensureExpenseTypesForAll() {
   }
 }
 
+// 老库迁移：users 表补 company_name 列（账号绑定唯一企业），并为已有 admin 补默认企业名
+async function ensureUserCompanyNameColumn() {
+  try {
+    await query("ALTER TABLE users ADD COLUMN company_name TEXT NOT NULL DEFAULT ''");
+  } catch (e) {
+    if (!/already exists/i.test(e.message || '')) throw e;
+  }
+  // 现有 admin 超管账号补默认企业名（幂等：已填的不动）
+  try {
+    await query("UPDATE users SET company_name='系统默认企业' WHERE username='admin' AND company_name=''");
+  } catch (e) { throw e; }
+}
+
 // 修复历史迁移造成的孤立归属：owner_id 指向不存在用户的业务数据，统一归属到 admin
 async function fixOrphanedOwners() {
   const admin = await queryOne("SELECT id FROM users WHERE username='admin'");
@@ -731,6 +754,9 @@ async function init() {
 
   // 3.7) 确保每个账号都拥有收支类型预设（费用类型，可配置联动/启停）
   await ensureExpenseTypesForAll();
+
+  // 3.8) 老库 users 表补 company_name 列（账号绑定唯一企业）
+  await ensureUserCompanyNameColumn();
 
   // 4) 首次启动：无用户则创建 admin/editor 并各自生成完整示例
   const r = await query('SELECT COUNT(*) AS c FROM users');

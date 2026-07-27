@@ -16,5 +16,8 @@
     "jsonwebtoken": "^9.0.2",
     "openai": "^6.48.0",
     "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@cloudbase/framework-plugin-container": "^1.9.7"
   }
 }

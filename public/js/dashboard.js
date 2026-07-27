@@ -52,6 +52,12 @@ const Dashboard = (() => {
     document.getElementById('m-salary').textContent = Calculator.fmtMoney(m.totalSalary);
     document.getElementById('m-hours').textContent = Calculator.fmtHour(m.totalHours);
 
+    // 核心层 KPI 按「涨红跌绿」上色（正=红，负=绿）
+    const setUp = (id, v) => { const el = document.getElementById(id); if (el) el.style.color = v >= 0 ? '#E5484D' : '#16A34A'; };
+    setUp('m-added', m.addedValue);
+    setUp('m-unit-added', m.unitAddedValue);
+    setUp('m-unit-profit', m.unitProfit);
+
     // 衍生效率层
     document.getElementById('m-unit-added').textContent = Calculator.fmtRate(m.unitAddedValue);
     document.getElementById('m-unit-salary').textContent = Calculator.fmtRate(m.unitSalary);
@@ -99,8 +105,8 @@ const Dashboard = (() => {
       data: {
         labels,
         datasets: [
-          { label: '收入', data: incomeArr, borderColor: '#059669', backgroundColor: 'rgba(5,150,105,0.1)', tension: 0.3, fill: true },
-          { label: '支出', data: expenseArr, borderColor: '#dc2626', backgroundColor: 'rgba(220,38,38,0.1)', tension: 0.3, fill: true }
+          { label: '收入', data: incomeArr, borderColor: '#E5484D', backgroundColor: 'rgba(229,72,77,0.1)', tension: 0.3, fill: true },
+          { label: '支出', data: expenseArr, borderColor: '#16A34A', backgroundColor: 'rgba(22,163,74,0.1)', tension: 0.3, fill: true }
         ]
       },
       options: {
@@ -161,7 +167,7 @@ const Dashboard = (() => {
         labels: incomeData.map(d => d.label),
         datasets: [{
           data: incomeData.map(d => Currency.convert(d.value)),
-          backgroundColor: ['#059669', '#10b981', '#6366f1']
+          backgroundColor: ['#E5484D', '#f87171', '#fca5a5']
         }]
       },
       options: {

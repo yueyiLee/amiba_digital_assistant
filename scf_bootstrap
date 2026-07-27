@@ -1,7 +1,7 @@
-#!/bin/bash
-# CloudBase HTTP 云函数启动脚本（Web 函数必须监听 9000）
+#!/bin/sh
+# CloudBase HTTP Web function bootstrap (must listen on 9000)
+# Use sh not bash: SCF Node.js runtime only has sh, no bash
 export PORT=9000
-# 打包器会忽略 node_modules，这里用 nm 目录携带依赖，启动时还原
 if [ -d nm ] && [ ! -d node_modules ]; then
   mv nm node_modules
 fi

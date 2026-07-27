@@ -278,10 +278,10 @@ const Entry = (() => {
     const sign = document.getElementById('entrySign');
     if (dir === 'expense') {
       expBtn.classList.add('active'); incBtn.classList.remove('active');
-      sign.textContent = '−'; sign.style.color = '#dc2626'; sign.style.background = '#fef2f2';
+      sign.textContent = '−'; sign.style.color = '#16A34A'; sign.style.background = '#f0fdf4';
     } else {
       incBtn.classList.add('active'); expBtn.classList.remove('active');
-      sign.textContent = '+'; sign.style.color = '#059669'; sign.style.background = '#ecfdf5';
+      sign.textContent = '+'; sign.style.color = '#E5484D'; sign.style.background = '#fef2f2';
     }
     renderTypeOptions();
     applyTypeLinkage();

@@ -24,7 +24,7 @@ router.use(requireAuth, requireSuperAdmin);
 router.get('/', async (req, res) => {
   try {
     const rows = await db.queryAll(
-      'SELECT id, username, display_name, created_at FROM users ORDER BY id'
+      'SELECT id, username, display_name, company_name, created_at FROM users ORDER BY id'
     );
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -33,17 +33,18 @@ router.get('/', async (req, res) => {
 // 新增用户
 router.post('/', async (req, res) => {
   try {
-    const { username, password, display_name } = req.body || {};
+    const { username, password, display_name, company_name } = req.body || {};
     if (!username || !password) return res.status(400).json({ error: '用户名和密码必填' });
     if (password.length < 6) return res.status(400).json({ error: '密码至少 6 位' });
+    if (!company_name || !String(company_name).trim()) return res.status(400).json({ error: '企业名称必填' });
 
     const exists = await db.queryOne('SELECT id FROM users WHERE username = $1', [username]);
     if (exists) return res.status(400).json({ error: '用户名已存在' });
 
     const hash = bcrypt.hashSync(password, 10);
     const result = await db.insertReturning(
-      'INSERT INTO users(username, password_hash, display_name, role) VALUES($1,$2,$3,$4) RETURNING id',
-      [username, hash, display_name || username, 'admin'],
+      'INSERT INTO users(username, password_hash, display_name, company_name, role) VALUES($1,$2,$3,$4,$5) RETURNING id',
+      [username, hash, display_name || username, String(company_name).trim(), 'admin'],
       'users'
     );
     const newId = result.rows[0].id;
@@ -51,21 +52,35 @@ router.post('/', async (req, res) => {
     try { await db.seedForUser(newId, 'sample'); }
     catch (seedErr) { console.error('[用户] 示例数据初始化失败:', seedErr.message); }
     res.json({
-      id: newId, username, display_name: display_name || username, role: 'admin'
+      id: newId, username, display_name: display_name || username, company_name: String(company_name).trim(), role: 'admin'
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// 修改用户（显示名）
+// 修改用户（显示名 / 企业名称）
 router.put('/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { display_name } = req.body || {};
+    const { display_name, company_name } = req.body || {};
     const user = await db.queryOne('SELECT * FROM users WHERE id = $1', [id]);
     if (!user) return res.status(404).json({ error: '用户不存在' });
 
-    await db.query('UPDATE users SET display_name=$1 WHERE id=$2',
-      [display_name ?? user.display_name, id]);
+    const updates = [];
+    const params = [];
+    let p = 1;
+    if (display_name !== undefined) {
+      updates.push(`display_name=$${p++}`);
+      params.push(display_name);
+    }
+    if (company_name !== undefined) {
+      const trimmed = String(company_name).trim();
+      if (!trimmed) return res.status(400).json({ error: '企业名称不能为空' });
+      updates.push(`company_name=$${p++}`);
+      params.push(trimmed);
+    }
+    if (updates.length === 0) return res.json({ success: true });
+    params.push(id);
+    await db.query(`UPDATE users SET ${updates.join(', ')} WHERE id=$${p}`, params);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

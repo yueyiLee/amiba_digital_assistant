@@ -10,14 +10,15 @@ const Users = (() => {
     document.getElementById('userCount').textContent = list.length;
 
     const tbl = document.getElementById('userTable');
-    if (list.length === 0) { tbl.innerHTML = '<tr><td colspan="4" class="empty-state">暂无用户</td></tr>'; return; }
+    if (list.length === 0) { tbl.innerHTML = '<tr><td colspan="5" class="empty-state">暂无用户</td></tr>'; return; }
     const me = Auth.getUser();
-    tbl.innerHTML = `<thead><tr><th>用户名</th><th>显示名</th><th>创建时间</th><th>操作</th></tr></thead>
+    tbl.innerHTML = `<thead><tr><th>用户名</th><th>显示名</th><th>企业名称</th><th>创建时间</th><th>操作</th></tr></thead>
       <tbody>${list.map(u => {
         const isMe = me && u.id === me.id;
         return `<tr>
           <td>${u.username}${isMe ? ' <span class="badge g">我</span>' : ''}</td>
           <td>${u.display_name}</td>
+          <td>${u.company_name || '—'}</td>
           <td>${u.created_at ? u.created_at.replace('T', ' ').substring(0, 16) : '—'}</td>
           <td>
             <button class="btn btn-secondary btn-sm" onclick="Users.openEditModal(${u.id})">编辑</button>
@@ -32,15 +33,18 @@ const Users = (() => {
     const body = `
       <div class="form-group"><label class="form-label">用户名 <span class="req">*</span></label><input type="text" class="form-input" id="m-username" placeholder="登录用户名"></div>
       <div class="form-group"><label class="form-label">密码 <span class="req">*</span></label><input type="password" class="form-input" id="m-password" placeholder="至少 6 位"></div>
-      <div class="form-group"><label class="form-label">显示名</label><input type="text" class="form-input" id="m-display_name" placeholder="用户昵称"></div>`;
+      <div class="form-group"><label class="form-label">显示名</label><input type="text" class="form-input" id="m-display_name" placeholder="用户昵称"></div>
+      <div class="form-group"><label class="form-label">企业名称 <span class="req">*</span></label><input type="text" class="form-input" id="m-company_name" placeholder="账号唯一绑定的企业名称"></div>`;
     App.openModal('添加用户', body, async () => {
       const data = {
         username: document.getElementById('m-username').value.trim(),
         password: document.getElementById('m-password').value,
-        display_name: document.getElementById('m-display_name').value.trim()
+        display_name: document.getElementById('m-display_name').value.trim(),
+        company_name: document.getElementById('m-company_name').value.trim()
       };
       if (!data.username) return App.toast('用户名必填', 'error');
       if (!data.password || data.password.length < 6) return App.toast('密码至少 6 位', 'error');
+      if (!data.company_name) return App.toast('企业名称必填', 'error');
       try {
         await API.post('/users', data);
         await Storage.refreshCache();
@@ -57,11 +61,14 @@ const Users = (() => {
     if (!u) return;
     const body = `
       <div class="form-group"><label class="form-label">用户名</label><input type="text" class="form-input" value="${u.username}" disabled></div>
-      <div class="form-group"><label class="form-label">显示名</label><input type="text" class="form-input" id="m-display_name" value="${u.display_name}"></div>`;
+      <div class="form-group"><label class="form-label">显示名</label><input type="text" class="form-input" id="m-display_name" value="${u.display_name}"></div>
+      <div class="form-group"><label class="form-label">企业名称 <span class="req">*</span></label><input type="text" class="form-input" id="m-company_name" value="${u.company_name || ''}" placeholder="账号唯一绑定的企业名称"></div>`;
     App.openModal('编辑用户', body, async () => {
       const data = {
-        display_name: document.getElementById('m-display_name').value.trim()
+        display_name: document.getElementById('m-display_name').value.trim(),
+        company_name: document.getElementById('m-company_name').value.trim()
       };
+      if (!data.company_name) return App.toast('企业名称必填', 'error');
       try {
         await API.put('/users/' + id, data);
         await Storage.refreshCache();
