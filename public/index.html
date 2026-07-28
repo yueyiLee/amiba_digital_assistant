@@ -79,7 +79,13 @@
         </div>
       </div>
 
-      <div class="nav-item" data-key="contract"><span class="ni-ic">📑</span><span class="ni-label">合同管理</span></div>
+      <div class="nav-group has-sub">
+        <div class="nav-item" data-page="contract" data-toggle="sub"><span class="ni-ic">📑</span><span class="ni-label">合同管理</span><span class="ni-caret">▸</span></div>
+        <div class="sub-list">
+          <div class="nav-sub" data-key="contract-add"><span class="ni-dot">•</span>合同录入</div>
+          <div class="nav-sub" data-key="contract-query"><span class="ni-dot">•</span>合同查询</div>
+        </div>
+      </div>
       <div class="nav-item" data-key="service"><span class="ni-ic">🛎</span><span class="ni-label">服务管理</span></div>
       <div class="nav-item" data-key="inventory"><span class="ni-ic">📦</span><span class="ni-label">库存管理</span></div>
 
@@ -724,46 +730,105 @@
         <div class="table-wrap"><table class="data-table" id="productTable"></table></div>
       </section>
 
-      <!-- ===== 合同管理 ===== -->
-      <section class="page-section" id="page-contract">
+      <!-- ===== 合同录入（独立页面，不再使用弹框） ===== -->
+      <section class="page-section" id="page-contract-add">
         <div class="page-toolbar">
           <div>
-            <div class="page-title">合同管理</div>
-            <div class="page-subtitle">销售 / 采购合同录入、查询、关联收支记录</div>
+            <div class="page-title" id="contractAddTitle">合同录入</div>
+            <div class="page-subtitle">在此录入新的销售 / 采购合同。带明细的合同会自动按「日期-客户-首项明细等」生成合同名。</div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-secondary btn-sm" onclick="Business.clearContractForm()">清空表单</button>
+            <button class="btn btn-primary" onclick="Business.saveContract()">保存合同</button>
           </div>
         </div>
-        <!-- 子页面切换 -->
-        <div class="sub-nav-bar" id="contractSubNav">
-          <div class="sub-nav-tab active" data-sub="entry">📝 合同录入</div>
-          <div class="sub-nav-tab" data-sub="query">🔍 合同查询</div>
-        </div>
-        <!-- 子页 1: 合同录入 -->
-        <div class="sub-page" id="contractSubEntry">
-          <div class="setting-desc" style="margin-bottom:12px;">在这里录入新的销售 / 采购合同。带明细的合同会自动按「日期-客户-首项明细等」生成合同名。</div>
-          <button class="btn btn-primary" onclick="Business.openContractModal()">+ 添加合同</button>
-          <div class="ana-card" style="margin-top:14px;">
-            <div class="ana-card-title">最近录入的合同（最近 5 条）</div>
-            <div class="table-wrap"><table class="data-table" id="contractRecentTable"></table></div>
+        <div class="card">
+          <div class="card-title">基本信息</div>
+          <div class="form-grid two-col">
+            <div class="form-group">
+              <label class="form-label">客户 <span class="req">*</span></label>
+              <select class="form-select" id="m-customer_id"></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">合同方向 <span class="req">*</span></label>
+              <select class="form-select" id="m-direction">
+                <option value="sale">销售（我方卖出商品）</option>
+                <option value="purchase">采购（我方买入商品）</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">签订日期</label>
+              <input type="date" class="form-input" id="m-date">
+            </div>
+            <div class="form-group">
+              <label class="form-label">状态</label>
+              <select class="form-select" id="m-status">
+                <option>进行中</option>
+                <option>已完成</option>
+                <option>已终止</option>
+              </select>
+            </div>
+            <div class="form-group" style="grid-column:1/-1;">
+              <label class="form-label">备注</label>
+              <textarea class="form-input" id="m-note" rows="2" placeholder="可选：合同补充说明、对方联系人、付款条款等"></textarea>
+            </div>
           </div>
         </div>
-        <!-- 子页 2: 合同查询 -->
-        <div class="sub-page" id="contractSubQuery" style="display:none;">
-          <div class="metric-grid row3">
-            <div class="metric-card primary"><div class="m-name">合同总数</div><div class="m-value" id="contractCount">0</div></div>
-            <div class="metric-card"><div class="m-name">合同总金额</div><div class="m-value" id="contractAmount">¥ 0</div></div>
-            <div class="metric-card"><div class="m-name">进行中</div><div class="m-value positive" id="contractActive">0</div></div>
+
+        <div class="card">
+          <div class="card-title">商品明细</div>
+          <div class="setting-desc">销售合同填卖出商品 / 采购合同填买入商品。商品名支持模糊搜索。</div>
+          <div class="sub-row sub-row-head sub-row-item">
+            <div class="ci-label">商品</div>
+            <div class="ci-label">数量</div>
+            <div class="ci-label">实际交易金额</div>
+            <div></div>
           </div>
-          <div class="query-toolbar">
-            <input type="text" class="form-input" id="contractQCustomer" placeholder="客户名称" style="width:160px;">
-            <select class="form-select" id="contractQDirection" style="width:120px;">
-              <option value="">全部方向</option>
-              <option value="sale">销售</option>
-              <option value="purchase">采购</option>
-            </select>
-            <button class="btn btn-secondary btn-sm" id="contractResetBtn">重置</button>
-          </div>
-          <div class="table-wrap"><table class="data-table" id="contractTable"></table></div>
+          <div id="contractItems"><div class="text-muted" style="font-size:12px;">暂无明细，点击下方按钮添加</div></div>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="Business.addContractItemRow()">+ 添加商品明细</button>
         </div>
+
+        <div class="card">
+          <div class="card-title">服务费明细</div>
+          <div class="setting-desc">从「服务管理」中选择服务，填写该合同实际发生的服务费用。</div>
+          <div class="sub-row sub-row-head sub-row-svc">
+            <div class="ci-label">服务（从服务管理选）</div>
+            <div class="ci-label">实际服务费用（¥）</div>
+            <div></div>
+          </div>
+          <div id="contractSvcs"><div class="text-muted" style="font-size:12px;">暂无服务费，点击下方按钮添加</div></div>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="Business.addContractSvcRow()">+ 添加服务费</button>
+        </div>
+
+        <div class="form-actions">
+          <button class="btn btn-secondary" onclick="Business.clearContractForm()">清空表单</button>
+          <button class="btn btn-primary btn-lg" onclick="Business.saveContract()">保存合同</button>
+        </div>
+      </section>
+
+      <!-- ===== 合同查询（独立页面） ===== -->
+      <section class="page-section" id="page-contract-query">
+        <div class="page-toolbar">
+          <div>
+            <div class="page-title">合同查询</div>
+            <div class="page-subtitle">查看已录入的合同，编辑/删除。点击「编辑」会跳到合同录入页。</div>
+          </div>
+        </div>
+        <div class="metric-grid row3">
+          <div class="metric-card primary"><div class="m-name">合同总数</div><div class="m-value" id="contractCount">0</div></div>
+          <div class="metric-card"><div class="m-name">合同总金额</div><div class="m-value" id="contractAmount">¥ 0</div></div>
+          <div class="metric-card"><div class="m-name">进行中</div><div class="m-value positive" id="contractActive">0</div></div>
+        </div>
+        <div class="query-toolbar">
+          <input type="text" class="form-input" id="contractQCustomer" placeholder="客户名称" style="width:160px;">
+          <select class="form-select" id="contractQDirection" style="width:120px;">
+            <option value="">全部方向</option>
+            <option value="sale">销售</option>
+            <option value="purchase">采购</option>
+          </select>
+          <button class="btn btn-secondary btn-sm" id="contractResetBtn">重置</button>
+        </div>
+        <div class="table-wrap"><table class="data-table" id="contractTable"></table></div>
       </section>
 
       <!-- ===== 服务管理 ===== -->

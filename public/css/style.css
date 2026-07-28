@@ -155,9 +155,13 @@ body {
 .btab-content.active { display: block; }
 
 /* ========== 卡片 ========== */
-.card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; }
+.card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 14px; }
 .card .card-title { font-size: 15px; font-weight: 600; color: #0f172a; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #f1f5f9; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.form-grid .form-group { margin-bottom: 0; }
+.form-actions { display: flex; gap: 12px; justify-content: flex-end; margin: 18px 0 30px; }
+@media (max-width: 800px) { .form-grid { grid-template-columns: 1fr; } }
 
 /* ========== 记录列表 ========== */
 .record-item { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
