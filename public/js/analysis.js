@@ -353,45 +353,58 @@ const Analysis = (() => {
     });
     return Object.values(byId).filter(r => r.sale > 0 || r.invValue > 0).sort((a, b) => b.sale - a.sale);
   }
-  function renderProduct() {
-    const rows = buildProductMetrics();
-    const totalSale = rows.reduce((s, r) => s + r.sale, 0);
-    const totalInv = rows.reduce((s, r) => s + r.invValue, 0);
-    $('prodTotalSale').textContent = money(totalSale);
-    $('prodTotalInv').textContent = money(totalInv);
-    $('prodAvgGm').textContent = totalSale > 0
-      ? ((totalSale - rows.reduce((s, r) => s + r.cost, 0)) / totalSale * 100).toFixed(1) + '%'
-      : '0%';
-
-    // Top 5 销售
-    const top = rows.slice(0, 5);
-    const max = Math.max(1, ...top.map(r => r.sale));
-    $('prodTopBars').innerHTML = top.map(r => `
-      <div class="ana-bar-row">
-        <div class="ana-bar-label">${escapeHtml(r.name)}</div>
-        <div class="ana-bar-track"><div class="ana-bar-fill sale" style="width:${(r.sale / max * 100).toFixed(0)}%"></div></div>
-        <div class="ana-bar-val">${money(r.sale)}</div>
-      </div>`).join('') || '<div class="empty-state">暂无商品销售数据</div>';
-
-    // 明细表
-    const marginTh = getProductMarginThreshold();
-    const showZeroStock = hasZeroStockRule();
-    $('prodTable').innerHTML = `<thead><tr><th>商品</th><th>分类</th><th>销售额</th><th>成本</th><th>毛利率</th><th>库存量</th><th>库存价值</th><th>状态</th></tr></thead>
-      <tbody>${rows.map(r => {
-        const stat = r.gm < marginTh && r.sale > 0 ? '<span class="badge red">毛利跌破</span>'
-                    : r.qty === 0 && r.sale > 0 && showZeroStock ? '<span class="badge yellow">零库存</span>'
-                    : '<span class="badge gray">正常</span>';
-        return `<tr data-anchor="product:${r.id}">
-          <td>${escapeHtml(r.name)}</td>
-          <td>${escapeHtml(r.category)}</td>
-          <td class="amt pos">${money(r.sale)}</td>
-          <td class="amt neg">${money(r.cost)}</td>
-          <td>${(r.gm * 100).toFixed(1)}%</td>
-          <td>${r.qty}</td>
-          <td class="amt">${money(r.invValue)}</td>
-          <td>${stat}</td>
-        </tr>`;
-      }).join('') || '<tr><td colspan="8" class="empty-state">暂无商品数据</td></tr>'}</tbody>`;
+  // ========== 5. 商品分析（收入类/支出类 双 tab，数据来自后端聚合接口） ==========
+  let prodTab = 'income';
+  async function renderProduct() {
+    const range = getRange();
+    const qs = 'startDate=' + encodeURIComponent(range.start) + '&endDate=' + encodeURIComponent(range.end);
+    try {
+      const [sales, purchase] = await Promise.all([
+        API.get('/analysis/product-sales?' + qs),
+        API.get('/analysis/product-purchase?' + qs)
+      ]);
+      // 收入类 KPI
+      $('piQty').textContent = (sales.total_qty || 0).toLocaleString();
+      $('piSale').textContent = money(sales.total_sale || 0);
+      $('piGm').textContent = ((sales.avg_gm || 0) * 100).toFixed(1) + '%';
+      renderProdTopTable('piQtyTop', sales.by_qty);
+      renderProdTopTable('piAmtTop', sales.by_amount);
+      renderPriceTable('piPriceTop', sales.price_change);
+      // 支出类 KPI
+      $('ppQty').textContent = (purchase.total_qty || 0).toLocaleString();
+      $('ppCost').textContent = money(purchase.total_cost || 0);
+      renderProdTopTable('ppQtyTop', purchase.by_qty);
+      renderProdTopTable('ppCostTop', purchase.by_amount);
+      renderPriceTable('ppPriceTop', purchase.price_change);
+    } catch (e) {
+      App.toast('商品分析加载失败：' + e.message, 'error');
+    }
+  }
+  // 数量/金额 TOP5 表格（同一行含 数量/金额/毛利率）
+  function renderProdTopTable(tableId, rows) {
+    const el = $(tableId);
+    if (!el) return;
+    if (!rows || rows.length === 0) { el.innerHTML = '<tbody><tr><td class="empty-state" colspan="4">暂无数据</td></tr></tbody>'; return; }
+    el.innerHTML = `<thead><tr><th>商品</th><th>数量</th><th>金额</th><th>毛利率</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td>${escapeHtml(r.product_name || '未命名商品')}</td>
+        <td>${r.total_qty || 0}</td>
+        <td class="amt">${money(r.total_amount || 0)}</td>
+        <td>${( (r.gm || 0) * 100 ).toFixed(1)}%</td>
+      </tr>`).join('')}</tbody>`;
+  }
+  // 实际价变动 TOP5 表格
+  function renderPriceTable(tableId, rows) {
+    const el = $(tableId);
+    if (!el) return;
+    if (!rows || rows.length === 0) { el.innerHTML = '<tbody><tr><td class="empty-state" colspan="4">暂无价格变动数据（需同一商品在多笔合同中有成交价）</td></tr></tbody>'; return; }
+    el.innerHTML = `<thead><tr><th>商品</th><th>最低价 → 最高价</th><th>变动幅度</th><th>样本数</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td>${escapeHtml(r.product_name || '未命名商品')}</td>
+        <td>${money(r.min || 0)} → ${money(r.max || 0)}</td>
+        <td class="amt ${r.change > 0 ? 'pos' : 'neg'}">${((r.change || 0) * 100).toFixed(1)}%</td>
+        <td>${r.samples || 0}</td>
+      </tr>`).join('')}</tbody>`;
   }
 
   // ========== 6. 合同分析（简化版：按客户聚合） ==========
@@ -980,6 +993,18 @@ const Analysis = (() => {
         // 预警遮罩点击关闭
         if (e.target && e.target.id === 'alertConfigOverlay') {
           closeAlertConfig();
+          return;
+        }
+        // 商品分析：收入类/支出类 tab 切换
+        const ptab = e.target.closest && e.target.closest('#prodTabs .ana-tab');
+        if (ptab) {
+          const newTab = ptab.dataset.tab;
+          if (newTab === prodTab) return;
+          prodTab = newTab;
+          document.querySelectorAll('#prodTabs .ana-tab').forEach(t => t.classList.toggle('active', t === ptab));
+          document.getElementById('prodIncomeWrap').style.display = newTab === 'income' ? '' : 'none';
+          document.getElementById('prodPurchaseWrap').style.display = newTab === 'purchase' ? '' : 'none';
+          renderProduct();
           return;
         }
       });

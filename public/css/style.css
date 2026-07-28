@@ -166,6 +166,14 @@ body {
 .record-item .r-unit { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #f1f5f9; color: #475569; margin-left: 4px; }
 .record-item .r-date { font-size: 12px; color: #64748b; margin-top: 2px; }
 .record-item .r-date .r-opt { font-size: 11px; color: #94a3b8; }
+.record-item .r-contract-line { font-size: 12px; margin-top: 4px; }
+.record-item .r-contract-line.linked .r-contract { color: #2563eb; }
+.record-item .r-contract-line.unlinked .r-nocontract { color: #dc2626; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
+.record-item .r-relink { margin-left: 4px; padding: 1px 10px; }
+.relink-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+.relink-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.relink-item:hover { background: #f8fafc; border-color: #cbd5e1; }
+.relink-item input { margin: 0; }
 .record-item .r-amt { font-weight: 700; font-size: 15px; }
 .record-item .r-amt.pos { color: #E5484D; }
 .record-item .r-amt.neg { color: #16A34A; }

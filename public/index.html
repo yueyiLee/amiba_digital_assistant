@@ -344,18 +344,50 @@
             </span>
           </div>
         </div>
-        <div class="metric-grid row3">
-          <div class="metric-card highlight"><div class="m-name">总销售额</div><div class="m-value" id="prodTotalSale">¥ 0</div></div>
-          <div class="metric-card"><div class="m-name">平均毛利率</div><div class="m-value" id="prodAvgGm">0%</div></div>
-          <div class="metric-card"><div class="m-name">库存总价值</div><div class="m-value" id="prodTotalInv">¥ 0</div></div>
+        <div class="ana-tab-bar" id="prodTabs">
+          <div class="ana-tab active" data-tab="income">收入类（销售）</div>
+          <div class="ana-tab" data-tab="purchase">支出类（采购）</div>
         </div>
-        <div class="ana-card">
-          <div class="ana-card-title">Top 5 销售额</div>
-          <div id="prodTopBars"></div>
+
+        <!-- 收入类 -->
+        <div class="prod-tab-wrap" id="prodIncomeWrap">
+          <div class="metric-grid row3">
+            <div class="metric-card highlight"><div class="m-name">销售总数量</div><div class="m-value" id="piQty">0</div></div>
+            <div class="metric-card"><div class="m-name">销售总金额</div><div class="m-value" id="piSale">¥ 0</div></div>
+            <div class="metric-card"><div class="m-name">平均毛利率</div><div class="m-value" id="piGm">0%</div></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">销售数量 TOP5</div>
+            <div class="table-wrap"><table class="data-table" id="piQtyTop"></table></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">销售金额 TOP5</div>
+            <div class="table-wrap"><table class="data-table" id="piAmtTop"></table></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">实际销售价变动 TOP5</div>
+            <div class="table-wrap"><table class="data-table" id="piPriceTop"></table></div>
+          </div>
         </div>
-        <div class="ana-card">
-          <div class="ana-card-title">商品明细</div>
-          <div class="table-wrap"><table class="data-table" id="prodTable"></table></div>
+
+        <!-- 支出类 -->
+        <div class="prod-tab-wrap" id="prodPurchaseWrap" style="display:none;">
+          <div class="metric-grid row2">
+            <div class="metric-card highlight"><div class="m-name">采购总数量</div><div class="m-value" id="ppQty">0</div></div>
+            <div class="metric-card"><div class="m-name">采购总成本</div><div class="m-value" id="ppCost">¥ 0</div></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">采购数量 TOP5</div>
+            <div class="table-wrap"><table class="data-table" id="ppQtyTop"></table></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">采购成本 TOP5</div>
+            <div class="table-wrap"><table class="data-table" id="ppCostTop"></table></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">实际采购价变动 TOP5</div>
+            <div class="table-wrap"><table class="data-table" id="ppPriceTop"></table></div>
+          </div>
         </div>
       </section>
 
@@ -497,6 +529,10 @@
           <div class="form-group">
             <label class="form-label">⑤ 日期</label>
             <input type="date" class="form-input" id="entryDate">
+          </div>
+          <div class="form-group" id="entryContractGroup">
+            <label class="form-label">关联合同 <span class="opt">(可选，收入选销售合同 / 支出选采购合同)</span></label>
+            <select class="form-select" id="entryContract"><option value="">— 不关联 —</option></select>
           </div>
           <div class="form-group">
             <label class="form-label">备注</label>

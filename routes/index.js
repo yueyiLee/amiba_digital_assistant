@@ -26,15 +26,39 @@ router.get('/transactions', async (req, res) => {
     if (endDate) { params.push(endDate); sql += ` AND t.date<=$${++pi}`; }
     sql += ' ORDER BY t.date DESC, t.id DESC';
     const rows = await db.queryAll(sql, params);
-    ok(res, rows);
+    // 注入关联合同的拼接名（日期-客户[-商品等]）
+    const cids = [...new Set(rows.map(r => r.contract_id).filter(Boolean))];
+    const nameMap = {};
+    if (cids.length) {
+      const cons = await db.queryAll(`SELECT co.id, co.date, co.direction, cu.name AS customer_name,
+        (SELECT COALESCE(string_agg(p.name, ','), '') FROM contract_items ci LEFT JOIN products p ON ci.product_id=p.id WHERE ci.contract_id=co.id) AS prod_names,
+        (SELECT COALESCE(string_agg(cs.service_name, ','), '') FROM contract_services cs WHERE cs.contract_id=co.id) AS svc_names
+        FROM contracts co LEFT JOIN customers cu ON co.customer_id=cu.id WHERE co.id = ANY($1)`, [cids]);
+      cons.forEach(co => {
+        const names = [];
+        if (co.prod_names) co.prod_names.split(',').forEach(n => n && names.push(n));
+        if (co.svc_names) co.svc_names.split(',').forEach(n => n && names.push(n));
+        const d = co.date || '';
+        const display_name = names.length
+          ? `${d}-${co.customer_name || '—'}-${names[0]}${names.length > 1 ? '等' : ''}`
+          : `${d}-${co.customer_name || '—'}`;
+        nameMap[co.id] = { display_name, direction: co.direction };
+      });
+    }
+    const out = rows.map(r => ({
+      ...r,
+      contract_display_name: r.contract_id ? (nameMap[r.contract_id] ? nameMap[r.contract_id].display_name : null) : null,
+      contract_direction: r.contract_id ? (nameMap[r.contract_id] ? nameMap[r.contract_id].direction : null) : null
+    }));
+    ok(res, out);
   } catch (e) { fail400(res, e.message); }
 });
 
 router.post('/transactions', async (req, res) => {
   try {
-    const { amount, type, unit, date, customer_id, product_id, note, category } = req.body || {};
+    const { amount, type, unit, date, customer_id, product_id, note, category, contract_id } = req.body || {};
     if (amount == null || !type || !date) return fail400(res, '缺少必要字段（金额/类型/日期）');
-    // 归属校验：客户/商品必须是当前账号自己的，杜绝跨账号引用泄露
+    // 归属校验：客户/商品/合同必须是当前账号自己的，杜绝跨账号引用泄露
     if (customer_id) {
       const c = await db.queryOne('SELECT 1 FROM customers WHERE id=$1 AND owner_id=$2', [customer_id, req.user.id]);
       if (!c) return fail400(res, '客户不存在或无权访问');
@@ -43,9 +67,13 @@ router.post('/transactions', async (req, res) => {
       const p = await db.queryOne('SELECT 1 FROM products WHERE id=$1 AND owner_id=$2', [product_id, req.user.id]);
       if (!p) return fail400(res, '商品不存在或无权访问');
     }
+    if (contract_id) {
+      const co = await db.queryOne('SELECT 1 FROM contracts WHERE id=$1 AND owner_id=$2', [contract_id, req.user.id]);
+      if (!co) return fail400(res, '合同不存在或无权访问');
+    }
     const result = await db.insertReturning(
-      'INSERT INTO transactions(amount,type,unit,customer_id,product_id,date,note,category,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id',
-      [amount, type, unit || '全公司', customer_id || null, product_id || null, date, note || '', category || '', req.user.id]
+      'INSERT INTO transactions(amount,type,unit,customer_id,product_id,date,note,category,contract_id,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
+      [amount, type, unit || '全公司', customer_id || null, product_id || null, date, note || '', category || '', contract_id || null, req.user.id]
     );
     ok(res, { id: result.rows[0].id });
   } catch (e) { fail400(res, e.message); }
@@ -56,7 +84,7 @@ router.put('/transactions/:id', async (req, res) => {
     const t = req.body || {};
     const old = await db.queryOne('SELECT * FROM transactions WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
     if (!old) return fail404(res, '记录不存在');
-    // 归属校验：客户/商品必须是当前账号自己的
+    // 归属校验：客户/商品/合同必须是当前账号自己的
     if (t.customer_id) {
       const c = await db.queryOne('SELECT 1 FROM customers WHERE id=$1 AND owner_id=$2', [t.customer_id, req.user.id]);
       if (!c) return fail400(res, '客户不存在或无权访问');
@@ -65,13 +93,19 @@ router.put('/transactions/:id', async (req, res) => {
       const p = await db.queryOne('SELECT 1 FROM products WHERE id=$1 AND owner_id=$2', [t.product_id, req.user.id]);
       if (!p) return fail400(res, '商品不存在或无权访问');
     }
+    if (t.contract_id) {
+      const co = await db.queryOne('SELECT 1 FROM contracts WHERE id=$1 AND owner_id=$2', [t.contract_id, req.user.id]);
+      if (!co) return fail400(res, '合同不存在或无权访问');
+    }
+    const newContract = t.contract_id === undefined ? old.contract_id : (t.contract_id || null);
     await db.query(
-      'UPDATE transactions SET amount=$1,type=$2,unit=$3,customer_id=$4,product_id=$5,date=$6,note=$7,category=$8 WHERE id=$9 AND owner_id=$10',
+      'UPDATE transactions SET amount=$1,type=$2,unit=$3,customer_id=$4,product_id=$5,date=$6,note=$7,category=$8,contract_id=$9 WHERE id=$10 AND owner_id=$11',
       [t.amount ?? old.amount, t.type ?? old.type, t.unit ?? old.unit,
        t.customer_id === undefined ? old.customer_id : (t.customer_id || null),
        t.product_id === undefined ? old.product_id : (t.product_id || null),
        t.date ?? old.date, t.note ?? old.note,
-       t.category === undefined ? old.category : (t.category || ''), req.params.id, req.user.id]
+       t.category === undefined ? old.category : (t.category || ''),
+       newContract, req.params.id, req.user.id]
     );
     ok(res, { success: true });
   } catch (e) { fail400(res, e.message); }
@@ -763,6 +797,106 @@ router.post('/init/sample', async (req, res) => {
     // 重新生成完整示例
     await db.seedForUser(uid, 'full');
     ok(res, { success: true, message: '示例数据已重置' });
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 8b. 候选合同推荐（一键补关联） ========== */
+router.get('/contracts/suggest', async (req, res) => {
+  try {
+    const { direction, customer_id, date } = req.query; // direction: 'sale' | 'purchase'
+    let sql = `SELECT co.id, co.date, co.direction, c.name AS customer_name,
+      (SELECT COALESCE(string_agg(p.name, ','), '') FROM contract_items ci LEFT JOIN products p ON ci.product_id=p.id WHERE ci.contract_id=co.id) AS prod_names,
+      (SELECT COALESCE(string_agg(cs.service_name, ','), '') FROM contract_services cs WHERE cs.contract_id=co.id) AS svc_names
+      FROM contracts co LEFT JOIN customers c ON co.customer_id=c.id WHERE co.owner_id=$1`;
+    const params = [req.user.id];
+    let pi = 1;
+    if (direction) { params.push(direction); sql += ` AND co.direction=$${++pi}`; }
+    if (customer_id) { params.push(customer_id); sql += ` AND co.customer_id=$${++pi}`; }
+    sql += ' ORDER BY co.id DESC';
+    const rows = await db.queryAll(sql, params);
+    const list = rows.map(co => {
+      const names = [];
+      if (co.prod_names) co.prod_names.split(',').forEach(n => n && names.push(n));
+      if (co.svc_names) co.svc_names.split(',').forEach(n => n && names.push(n));
+      const d = co.date || '';
+      const display_name = names.length
+        ? `${d}-${co.customer_name || '—'}-${names[0]}${names.length > 1 ? '等' : ''}`
+        : `${d}-${co.customer_name || '—'}`;
+      return { id: co.id, display_name, date: d, direction: co.direction, customer_name: co.customer_name };
+    });
+    // 日期相近排序（客户已通过 SQL 过滤优先）
+    if (date) {
+      list.forEach(x => {
+        const diff = Math.abs((new Date(x.date) - new Date(date)) / 86400000);
+        x._diff = isNaN(diff) ? 9999 : diff;
+      });
+      list.sort((a, b) => a._diff - b._diff);
+    }
+    ok(res, list);
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 8c. 商品分析聚合（收入类 / 支出类，基于 contract_items） ========== */
+async function productAnalysis(ownerId, direction, sd, ed) {
+  const rows = await db.queryAll(`
+    SELECT ci.product_id, p.name AS product_name,
+           SUM(ci.quantity) AS total_qty,
+           SUM(ci.quantity * ci.actual_price) AS total_amount,
+           SUM(ci.quantity * COALESCE(p.purchase_price, 0)) AS total_cost
+    FROM contract_items ci
+    JOIN contracts co ON ci.contract_id = co.id
+    LEFT JOIN products p ON ci.product_id = p.id
+    WHERE co.owner_id=$1 AND co.direction=$2 AND co.date BETWEEN $3 AND $4
+    GROUP BY ci.product_id, p.name
+    ORDER BY total_amount DESC`, [ownerId, direction, sd, ed]);
+  const series = await db.queryAll(`
+    SELECT ci.product_id, p.name AS product_name, co.date, ci.actual_price
+    FROM contract_items ci
+    JOIN contracts co ON ci.contract_id = co.id
+    LEFT JOIN products p ON ci.product_id = p.id
+    WHERE co.owner_id=$1 AND co.direction=$2 AND co.date BETWEEN $3 AND $4
+    ORDER BY ci.product_id, co.date`, [ownerId, direction, sd, ed]);
+  const byPid = {};
+  series.forEach(s => { (byPid[s.product_id] = byPid[s.product_id] || []).push({ date: s.date, price: Number(s.actual_price) || 0, name: s.product_name }); });
+  const priceChange = Object.values(byPid).map(arr => {
+    const prices = arr.map(x => x.price).filter(v => v > 0);
+    if (prices.length < 2) return null;
+    const min = Math.min(...prices), max = Math.max(...prices);
+    const change = min > 0 ? (max - min) / min : 0;
+    return { product_name: arr[0].name, change, min, max, samples: arr.length };
+  }).filter(Boolean).sort((a, b) => b.change - a.change).slice(0, 5);
+  const metrics = rows.map(r => ({
+    product_id: r.product_id, product_name: r.product_name,
+    total_qty: Number(r.total_qty) || 0,
+    total_amount: Number(r.total_amount) || 0,
+    total_cost: Number(r.total_cost) || 0,
+    gm: (Number(r.total_amount) || 0) > 0 ? ((Number(r.total_amount) - Number(r.total_cost)) / Number(r.total_amount)) : 0
+  }));
+  const totalSale = metrics.reduce((s, r) => s + r.total_amount, 0);
+  const totalCost = metrics.reduce((s, r) => s + r.total_cost, 0);
+  const totalQty = metrics.reduce((s, r) => s + r.total_qty, 0);
+  const avgGm = totalSale > 0 ? (totalSale - totalCost) / totalSale : 0;
+  return {
+    total_sale: totalSale, total_cost: totalCost, total_qty: totalQty, avg_gm: avgGm,
+    by_qty: metrics.slice().sort((a, b) => b.total_qty - a.total_qty).slice(0, 5),
+    by_amount: metrics.slice(0, 5),
+    price_change: priceChange
+  };
+}
+
+router.get('/analysis/product-sales', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const sd = startDate || '0001-01-01', ed = endDate || '9999-12-31';
+    ok(res, await productAnalysis(req.user.id, 'sale', sd, ed));
+  } catch (e) { fail400(res, e.message); }
+});
+
+router.get('/analysis/product-purchase', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const sd = startDate || '0001-01-01', ed = endDate || '9999-12-31';
+    ok(res, await productAnalysis(req.user.id, 'purchase', sd, ed));
   } catch (e) { fail400(res, e.message); }
 });
 
