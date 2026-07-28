@@ -21,6 +21,7 @@ const App = (() => {
     'product-add':       () => { Business.renderProductAdd(); },
     'product-query':     () => { Business.renderProductQuery(); },
     'contract':          () => { Business.renderContract(); },
+    'service':           () => { Business.renderServices(); },
     'inventory':         () => { Business.renderInventoryQuery(); },
     'emp-roster':        () => { Employees.renderRoster(); },
     'emp-history':       () => { Employees.renderHistory(); },

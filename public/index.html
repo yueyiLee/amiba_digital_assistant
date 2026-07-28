@@ -80,6 +80,7 @@
       </div>
 
       <div class="nav-item" data-key="contract"><span class="ni-ic">📑</span><span class="ni-label">合同管理</span></div>
+      <div class="nav-item" data-key="service"><span class="ni-ic">🛎</span><span class="ni-label">服务管理</span></div>
       <div class="nav-item" data-key="inventory"><span class="ni-ic">📦</span><span class="ni-label">库存管理</span></div>
 
       <div class="nav-group has-sub">
@@ -688,11 +689,28 @@
           <div class="metric-card"><div class="m-name">进行中</div><div class="m-value positive" id="contractActive">0</div></div>
         </div>
         <div class="query-toolbar">
-          <input type="text" class="form-input" id="contractQCustomer" placeholder="客户名称" style="width:180px;">
+          <input type="text" class="form-input" id="contractQCustomer" placeholder="客户名称" style="width:160px;">
+          <select class="form-select" id="contractQDirection" style="width:120px;">
+            <option value="">全部方向</option>
+            <option value="sale">销售</option>
+            <option value="purchase">采购</option>
+          </select>
           <button class="btn btn-secondary btn-sm" id="contractResetBtn">重置</button>
           <button class="btn btn-primary btn-sm" onclick="Business.openContractModal()">+ 添加合同</button>
         </div>
         <div class="table-wrap"><table class="data-table" id="contractTable"></table></div>
+      </section>
+
+      <!-- ===== 服务管理 ===== -->
+      <section class="page-section" id="page-service">
+        <div class="page-title">服务管理</div>
+        <div class="setting-desc" style="margin-bottom:8px;">管理合同可关联的「服务费」项目（如染色、设计、物流）。<b>与「杂费类别设置」是完全独立的两套数据，请勿混用。</b></div>
+        <div class="query-toolbar">
+          <input type="text" class="form-input" id="svcQName" placeholder="服务名称" style="width:180px;">
+          <button class="btn btn-secondary btn-sm" id="svcResetBtn">重置</button>
+          <button class="btn btn-primary btn-sm" id="addServiceBtn" onclick="Business.openServiceModal()">+ 添加服务</button>
+        </div>
+        <div class="table-wrap"><table class="data-table" id="serviceTable"></table></div>
       </section>
 
       <!-- ===== 库存管理 ===== -->

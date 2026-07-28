@@ -7,7 +7,8 @@ const Business = (() => {
   // 各二级页面的筛选状态 & 当前查询结果（供导出使用）
   let customerFilters = { name: '', type: '' };
   let productFilters = { name: '', cat1: '', cat2: '' };
-  let contractFilter = { customer: '' };
+  let contractFilter = { customer: '', direction: '' };
+  let serviceFilter = { name: '' };
   let inventoryFilter = { product: '' };
   let currentCustomerRows = [];
   let currentProductRows = [];
@@ -18,6 +19,7 @@ const Business = (() => {
     renderProducts();
     renderInventory();
     renderExpenseItems();
+    renderServices();
   }
 
   function escapeHtml(s) {
@@ -30,20 +32,93 @@ const Business = (() => {
   function renderContracts() {
     let list = Storage.getContractsSync();
     if (contractFilter.customer) list = list.filter(c => (c.customer_name || '').toLowerCase().includes(contractFilter.customer.toLowerCase()));
+    if (contractFilter.direction) list = list.filter(c => (c.direction || 'sale') === contractFilter.direction);
     document.getElementById('contractCount').textContent = list.length;
-    document.getElementById('contractAmount').textContent = Calculator.fmtMoney(list.reduce((s, c) => s + c.amount, 0));
+    document.getElementById('contractAmount').textContent = Calculator.fmtMoney(list.reduce((s, c) => s + (Number(c.amount) || 0), 0));
     document.getElementById('contractActive').textContent = list.filter(c => c.status === '进行中').length;
 
     const tbl = document.getElementById('contractTable');
     if (list.length === 0) { tbl.innerHTML = '<tr><td colspan="6" class="empty-state">暂无合同</td></tr>'; return; }
-    tbl.innerHTML = `<thead><tr><th>合同号</th><th>客户</th><th>金额</th><th>状态</th><th>开始日期</th><th>操作</th></tr></thead>
-      <tbody>${list.map(c => `<tr>
-        <td>${escapeHtml(c.contract_no)}</td><td>${escapeHtml(c.customer_name || '—')}</td>
-        <td class="amt pos">${Calculator.fmtMoney(c.amount)}</td>
-        <td><span class="badge ${c.status === '进行中' ? 'g' : 'gray'}">${escapeHtml(c.status)}</span></td>
-        <td>${c.start_date || '—'}</td>
-        <td>${Auth.canEdit() ? `<button class="btn btn-secondary btn-sm" onclick="Business.openContractModal(${c.id})">编辑</button> <button class="btn btn-danger btn-sm" onclick="Business.delContract(${c.id})">删</button>` : '—'}</td>
-      </tr>`).join('')}</tbody>`;
+    tbl.innerHTML = `<thead><tr><th>合同名</th><th>客户</th><th>金额</th><th>方向</th><th>签订日期</th><th>操作</th></tr></thead>
+      <tbody>${list.map(c => {
+        const dir = c.direction || 'sale';
+        const dirLabel = dir === 'purchase' ? '采购' : '销售';
+        const dirCls = dir === 'purchase' ? 'gray' : 'p';
+        const amtCls = dir === 'purchase' ? 'neg' : 'pos';
+        return `<tr>
+          <td>${escapeHtml(c.display_name || '—')}</td>
+          <td>${escapeHtml(c.customer_name || '—')}</td>
+          <td class="amt ${amtCls}">${Calculator.fmtMoney(c.amount)}</td>
+          <td><span class="badge ${dirCls}">${dirLabel}</span></td>
+          <td>${c.date || c.start_date || '—'}</td>
+          <td>${Auth.canEdit() ? `<button class="btn btn-secondary btn-sm" onclick="Business.openContractModal(${c.id})">编辑</button> <button class="btn btn-danger btn-sm" onclick="Business.delContract(${c.id})">删</button>` : '—'}</td>
+        </tr>`;
+      }).join('')}</tbody>`;
+  }
+
+  function sel2(v) { return (x) => x === v ? ' selected' : ''; }
+
+  function contractItemRowHtml(products, it, i) {
+    const pid = it && it.product_id ? it.product_id : '';
+    const qty = it ? (Number(it.quantity) || 0) : 0;
+    const price = it ? (Number(it.actual_price) || 0) : 0;
+    return `<div class="sub-row" data-idx="${i}">
+      <select class="form-select ci-product">${products.map(p => `<option value="${p.id}"${p.id === pid ? ' selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}</select>
+      <input type="number" class="form-input ci-qty" min="0" step="0.01" value="${qty}" placeholder="数量">
+      <input type="number" class="form-input ci-price" min="0" step="0.01" value="${price}" placeholder="实际单价">
+      <button type="button" class="btn btn-danger btn-sm" onclick="this.parentNode.remove()">×</button>
+    </div>`;
+  }
+
+  function contractSvcRowHtml(services, sv, i) {
+    const sid = sv && sv.service_id ? sv.service_id : '';
+    const sname = sv && sv.service_name ? sv.service_name : '';
+    const amt = sv ? (Number(sv.amount) || 0) : 0;
+    const opts = services.map(s => `<option value="${s.id}"${s.id === sid ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('');
+    return `<div class="sub-row" data-idx="${i}">
+      <select class="form-select cs-service">${opts ? `<option value="">手动输入服务名</option>${opts}` : `<option value="">（请先在「服务管理」添加服务）</option>`}</select>
+      <input type="text" class="form-input cs-name" placeholder="服务名（未选服务时填）" value="${escapeHtml(sname)}">
+      <input type="number" class="form-input cs-amt" min="0" step="0.01" value="${amt}" placeholder="金额">
+      <button type="button" class="btn btn-danger btn-sm" onclick="this.parentNode.remove()">×</button>
+    </div>`;
+  }
+
+  function addContractItemRow() {
+    const products = Storage.getProductOptions();
+    const div = document.createElement('div');
+    div.innerHTML = contractItemRowHtml(products, null, Date.now());
+    const el = document.getElementById('contractItems');
+    if (el) el.appendChild(div.firstElementChild);
+  }
+  function addContractSvcRow() {
+    const services = Storage.getServiceOptions();
+    const div = document.createElement('div');
+    div.innerHTML = contractSvcRowHtml(services, null, Date.now());
+    const el = document.getElementById('contractSvcs');
+    if (el) el.appendChild(div.firstElementChild);
+  }
+  function collectContractItems() {
+    const out = [];
+    document.querySelectorAll('#contractItems .sub-row').forEach(r => {
+      const pid = Number(r.querySelector('.ci-product').value);
+      if (!pid) return;
+      out.push({ product_id: pid, quantity: parseFloat(r.querySelector('.ci-qty').value) || 0, actual_price: parseFloat(r.querySelector('.ci-price').value) || 0 });
+    });
+    return out;
+  }
+  function collectContractSvcs() {
+    const out = [];
+    const svcOpts = Storage.getServiceOptions();
+    document.querySelectorAll('#contractSvcs .sub-row').forEach(r => {
+      const sid = r.querySelector('.cs-service').value;
+      const name = (r.querySelector('.cs-name').value || '').trim();
+      const amt = parseFloat(r.querySelector('.cs-amt').value) || 0;
+      const service_id = sid ? Number(sid) : null;
+      const finalName = service_id ? (svcOpts.find(s => s.id === service_id) ? svcOpts.find(s => s.id === service_id).name : name) : name;
+      if (!service_id && !finalName) return;
+      out.push({ service_id, service_name: finalName, amount: amt });
+    });
+    return out;
   }
 
   function openContractModal(id) {
@@ -51,27 +126,41 @@ const Business = (() => {
     const rec = edit ? Storage.getContractsSync().find(c => c.id === id) : null;
     if (edit && !rec) return App.toast('合同不存在', 'error');
     const customers = Storage.getCustomerOptions();
-    const sel = (v) => (x) => x === v ? ' selected' : '';
-    const s = sel(rec ? rec.status : '进行中');
+    const products = Storage.getProductOptions();
+    const services = Storage.getServiceOptions();
+    const items = edit && rec.items ? rec.items.slice() : [];
+    const svcs = edit && rec.services ? rec.services.slice() : [];
+    const s = sel2(rec ? (rec.status || '进行中') : '进行中');
+    const dir = rec ? (rec.direction || 'sale') : 'sale';
+    const itemRowsHtml = items.map((it, i) => contractItemRowHtml(products, it, i)).join('');
+    const svcRowsHtml = svcs.map((sv, i) => contractSvcRowHtml(services, sv, i)).join('');
+
     const body = `
-      <div class="form-group"><label class="form-label">合同编号 <span class="req">*</span></label><input type="text" class="form-input" id="m-contract_no" placeholder="HT-2026-XXX" value="${rec ? escapeHtml(rec.contract_no) : ''}"></div>
       <div class="form-group"><label class="form-label">客户 <span class="req">*</span></label><select class="form-select" id="m-customer_id">${customers.map(c => `<option value="${c.id}"${rec && c.id === rec.customer_id ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
-      <div class="form-group"><label class="form-label">合同金额 <span class="req">*</span></label><input type="number" class="form-input" id="m-amount" min="0" step="0.01" value="${rec ? rec.amount : ''}"></div>
+      <div class="form-group"><label class="form-label">合同方向 <span class="req">*</span></label><select class="form-select" id="m-direction"><option value="sale"${dir === 'sale' ? ' selected' : ''}>销售（我方卖出商品）</option><option value="purchase"${dir === 'purchase' ? ' selected' : ''}>采购（我方买入商品）</option></select></div>
+      <div class="form-group"><label class="form-label">签订日期</label><input type="date" class="form-input" id="m-date" value="${rec ? (rec.date || rec.start_date || '') : ''}"></div>
       <div class="form-group"><label class="form-label">状态</label><select class="form-select" id="m-status"><option${s('进行中')}>进行中</option><option${s('已完成')}>已完成</option><option${s('已终止')}>已终止</option></select></div>
-      <div class="form-group"><label class="form-label">开始日期</label><input type="date" class="form-input" id="m-start_date" value="${rec ? (rec.start_date || '') : ''}"></div>
-      <div class="form-group"><label class="form-label">结束日期</label><input type="date" class="form-input" id="m-end_date" value="${rec ? (rec.end_date || '') : ''}"></div>`;
+
+      <div class="sub-block-title">商品明细 <span class="text-muted">（销售合同填卖出商品 / 采购合同填买入商品）</span></div>
+      <div id="contractItems">${itemRowsHtml || '<div class="text-muted" style="font-size:12px;">暂无明细，点击下方按钮添加</div>'}</div>
+      <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="Business.addContractItemRow()">+ 添加商品明细</button>
+
+      <div class="sub-block-title" style="margin-top:14px;">服务费明细</div>
+      <div id="contractSvcs">${svcRowsHtml || '<div class="text-muted" style="font-size:12px;">暂无服务费，点击下方按钮添加</div>'}</div>
+      <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="Business.addContractSvcRow()">+ 添加服务费</button>
+
+      <div class="form-group" style="margin-top:14px;"><label class="form-label">备注</label><textarea class="form-input" id="m-note" rows="2">${rec ? escapeHtml(rec.note || '') : ''}</textarea></div>`;
     App.openModal(edit ? '编辑合同' : '添加合同', body, async () => {
       const data = {
-        contract_no: document.getElementById('m-contract_no').value.trim(),
         customer_id: Number(document.getElementById('m-customer_id').value),
-        amount: parseFloat(document.getElementById('m-amount').value),
+        direction: document.getElementById('m-direction').value,
+        date: document.getElementById('m-date').value,
         status: document.getElementById('m-status').value,
-        start_date: document.getElementById('m-start_date').value,
-        end_date: document.getElementById('m-end_date').value
+        note: document.getElementById('m-note').value,
+        items: collectContractItems(),
+        services: collectContractSvcs()
       };
-      if (!data.contract_no) return App.toast('合同编号必填', 'error');
       if (!data.customer_id) return App.toast('请选择客户', 'error');
-      if (!data.amount || data.amount <= 0) return App.toast('合同金额必须大于 0', 'error');
       if (edit) await API.put('/contracts/' + id, data);
       else await API.post('/contracts', data);
       await Storage.refreshCache();
@@ -82,11 +171,61 @@ const Business = (() => {
   }
 
   async function delContract(id) {
-    if (!confirm('确认删除该合同？')) return;
+    if (!confirm('确认删除该合同？关联的商品/服务费明细将一并删除。')) return;
     await API.del('/contracts/' + id);
     await Storage.refreshCache();
     renderContracts();
     App.toast('已删除', 'success');
+  }
+
+  // ========== 服务管理（与杂费类别 expense_items 独立） ==========
+  function renderServices() {
+    let list = Storage.getServicesSync();
+    if (serviceFilter.name) list = list.filter(s => s.name.toLowerCase().includes(serviceFilter.name.toLowerCase()));
+    const tbl = document.getElementById('serviceTable');
+    if (!tbl) return;
+    const addBtn = document.getElementById('addServiceBtn');
+    if (addBtn) addBtn.style.display = Auth.canEdit() ? '' : 'none';
+    if (list.length === 0) { tbl.innerHTML = '<tr><td colspan="4" class="empty-state">暂无服务，点击右上角"添加服务"新增</td></tr>'; return; }
+    tbl.innerHTML = `<thead><tr><th>服务名称</th><th>参考成本</th><th>备注</th><th style="width:160px;">操作</th></tr></thead>
+      <tbody>${list.map(s => `<tr>
+        <td>${escapeHtml(s.name)}</td>
+        <td>${Calculator.fmtMoney(s.reference_cost || 0)}</td>
+        <td class="misc-note">${escapeHtml(s.note || '') || '<span class="text-muted">—</span>'}</td>
+        <td>${Auth.canEdit() ? `<button class="btn btn-secondary btn-sm" onclick="Business.openServiceModal(${s.id})">编辑</button> <button class="btn btn-danger btn-sm" onclick="Business.delService(${s.id})">删</button>` : '—'}</td>
+      </tr>`).join('')}</tbody>`;
+  }
+
+  function openServiceModal(id) {
+    const edit = id != null;
+    const rec = edit ? Storage.getServicesSync().find(s => s.id === id) : null;
+    if (edit && !rec) return App.toast('服务不存在', 'error');
+    const body = `
+      <div class="form-group"><label class="form-label">服务名称 <span class="req">*</span></label><input type="text" class="form-input" id="m-svc-name" placeholder="如：染色服务、设计打样" value="${rec ? escapeHtml(rec.name) : ''}"></div>
+      <div class="form-group"><label class="form-label">参考成本 <span class="opt">(选填，单位成本/单价参考)</span></label><input type="number" class="form-input" id="m-svc-cost" min="0" step="0.01" value="${rec ? (rec.reference_cost || 0) : 0}"></div>
+      <div class="form-group"><label class="form-label">备注说明 <span class="opt">(选填)</span></label><textarea class="form-input" id="m-svc-note" rows="3">${rec ? escapeHtml(rec.note || '') : ''}</textarea></div>
+      <div class="setting-desc">服务仅用于合同「服务费明细」关联，与「杂费类别设置」互不影响。</div>`;
+    App.openModal(edit ? '编辑服务' : '添加服务', body, async () => {
+      const name = document.getElementById('m-svc-name').value.trim();
+      if (!name) return App.toast('服务名称必填', 'error');
+      const payload = { name, reference_cost: parseFloat(document.getElementById('m-svc-cost').value) || 0, note: document.getElementById('m-svc-note').value.trim() };
+      if (edit) await API.put('/services/' + id, payload);
+      else await API.post('/services', payload);
+      await Storage.refreshCache();
+      renderServices();
+      App.closeModal();
+      App.toast(edit ? '服务已更新' : '服务已添加', 'success');
+    });
+  }
+
+  async function delService(id) {
+    if (!confirm('确认删除该服务？已关联的合同服务费明细保留名称不受影响。')) return;
+    try {
+      await API.del('/services/' + id);
+      await Storage.refreshCache();
+      renderServices();
+      App.toast('已删除', 'success');
+    } catch (e) { App.toast(e.message, 'error'); }
   }
 
   // ========== 客户 ==========
@@ -622,9 +761,15 @@ const Business = (() => {
     renderProducts();
   }
   function resetContractFilters() {
-    contractFilter = { customer: '' };
+    contractFilter = { customer: '', direction: '' };
     const c = document.getElementById('contractQCustomer'); if (c) c.value = '';
+    const d = document.getElementById('contractQDirection'); if (d) d.value = '';
     renderContracts();
+  }
+  function resetServiceFilters() {
+    serviceFilter = { name: '' };
+    const n = document.getElementById('svcQName'); if (n) n.value = '';
+    renderServices();
   }
   function resetInventoryFilters() {
     inventoryFilter = { product: '' };
@@ -665,9 +810,11 @@ const Business = (() => {
     const prodResetBtn = document.getElementById('prodResetBtn');
     if (prodResetBtn) prodResetBtn.addEventListener('click', resetProductFilters);
 
-    // 合同：客户名称模糊搜索
+    // 合同：客户名称模糊搜索 + 方向筛选
     const contractQCustomer = document.getElementById('contractQCustomer');
     if (contractQCustomer) contractQCustomer.addEventListener('input', () => { contractFilter.customer = contractQCustomer.value.trim(); renderContracts(); });
+    const contractQDirection = document.getElementById('contractQDirection');
+    if (contractQDirection) contractQDirection.addEventListener('change', () => { contractFilter.direction = contractQDirection.value; renderContracts(); });
     const contractResetBtn = document.getElementById('contractResetBtn');
     if (contractResetBtn) contractResetBtn.addEventListener('click', resetContractFilters);
 
@@ -676,6 +823,12 @@ const Business = (() => {
     if (invQProduct) invQProduct.addEventListener('input', () => { inventoryFilter.product = invQProduct.value.trim(); renderInventory(); });
     const invResetBtn = document.getElementById('invResetBtn');
     if (invResetBtn) invResetBtn.addEventListener('click', resetInventoryFilters);
+
+    // 服务管理：名称搜索 / 重置
+    const svcQName = document.getElementById('svcQName');
+    if (svcQName) svcQName.addEventListener('input', () => { serviceFilter.name = svcQName.value.trim(); renderServices(); });
+    const svcResetBtn = document.getElementById('svcResetBtn');
+    if (svcResetBtn) svcResetBtn.addEventListener('click', resetServiceFilters);
   }
 
   // ========== 收支类型管理（费用类型，可配置方向/联动/启停） ==========
@@ -788,6 +941,7 @@ const Business = (() => {
            openProductModal, onCat1Change, delProduct, editInventory, openInventoryModal, delInventory,
            renderExpenseItems, openMiscItemModal, delMiscItem,
            renderExpenseTypes, openExpenseTypeModal, delExpenseType, toggleExpenseType,
+           renderServices, openServiceModal, delService, addContractItemRow, addContractSvcRow, resetServiceFilters,
            renderCustomerAdd, renderCustomerQuery, saveCustomerDirect,
            renderProductAdd, renderProductQuery, onCat1ChangeAdd, saveProductDirect,
            renderContract, renderInventoryQuery, exportCustomerQuery, exportProductQuery };

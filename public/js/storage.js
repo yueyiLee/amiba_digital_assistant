@@ -7,7 +7,7 @@ const Storage = (() => {
     transactions: [], customers: [], products: [], inventory: [],
     employees: [], workHours: [], contracts: [], settings: {},
     categories: [], users: [], expenseItems: [], expenseTypes: [],
-    employeeStatusHistory: []
+    employeeStatusHistory: [], services: []
   };
 
   // 全量加载（Promise.all 并发）
@@ -15,7 +15,7 @@ const Storage = (() => {
     const [
       transactions, customers, products, inventory,
       employees, workHours, contracts, settings, categories, users, expenseItems, expenseTypes,
-      employeeStatusHistory
+      employeeStatusHistory, services
     ] = await Promise.all([
       API.get('/transactions'),
       API.get('/customers'),
@@ -29,9 +29,10 @@ const Storage = (() => {
       API.get('/users').catch(() => []),
       API.get('/expense-items').catch(() => []),
       API.get('/expense-types').catch(() => []),
-      API.get('/employee-status-history-all').catch(() => [])
+      API.get('/employee-status-history-all').catch(() => []),
+      API.get('/services').catch(() => [])
     ]);
-    cached = { transactions, customers, products, inventory, employees, workHours, contracts, settings, categories, users, expenseItems, expenseTypes, employeeStatusHistory };
+    cached = { transactions, customers, products, inventory, employees, workHours, contracts, settings, categories, users, expenseItems, expenseTypes, employeeStatusHistory, services };
     return cached;
   }
 
@@ -61,6 +62,8 @@ const Storage = (() => {
   function getProductsSync() { return cached.products.slice(); }
   function getInventorySync() { return cached.inventory.slice(); }
   function getContractsSync() { return cached.contracts.slice(); }
+  function getServicesSync() { return cached.services.slice(); }
+  function getServiceOptions() { return cached.services.map(s => ({ id: s.id, name: s.name, reference_cost: s.reference_cost || 0 })); }
   function getSettingsSync() { return Object.assign({}, cached.settings); }
   function getCategoriesSync() { return cached.categories.slice(); }
   function getUsersSync() { return cached.users.slice(); }
@@ -94,6 +97,7 @@ const Storage = (() => {
     refreshCache,
     getTransactionsSync, getEmployeesSync, getEmployeeStatusHistorySync, getWorkHoursSync,
     getCustomersSync, getProductsSync, getInventorySync, getContractsSync,
+    getServicesSync, getServiceOptions,
     getSettingsSync, getCategoriesSync, getUsersSync,
     getCustomerOptions, getProductOptions, getUnitList, getActiveUnits,
     getExpenseItemsSync,

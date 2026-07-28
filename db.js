@@ -339,6 +339,34 @@ const INIT_TABLES_SQL = `
     owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     UNIQUE(owner_id, name, direction)
   );
+
+  CREATE TABLE IF NOT EXISTS services (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    reference_cost REAL DEFAULT 0,
+    note TEXT DEFAULT '',
+    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  CREATE TABLE IF NOT EXISTS contract_items (
+    id SERIAL PRIMARY KEY,
+    contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
+    product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+    quantity REAL DEFAULT 0,
+    actual_price REAL DEFAULT 0,
+    amount REAL DEFAULT 0,
+    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS contract_services (
+    id SERIAL PRIMARY KEY,
+    contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
+    service_id INTEGER REFERENCES services(id) ON DELETE SET NULL,
+    service_name TEXT DEFAULT '',
+    amount REAL DEFAULT 0,
+    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE
+  );
 `;
 
 // ===== 初始化：建表 + 种子数据（多租户账号隔离）=====
@@ -556,6 +584,41 @@ async function ensureUserCompanyNameColumn() {
   } catch (e) { throw e; }
 }
 
+// 合同/服务升级：新增 services / contract_items / contract_services 三表；
+// transactions 加 contract_id（收支↔合同关联，批4 使用）；
+// contracts 加 date / direction（签订日 / 销售采购方向）
+async function ensureContractUpgradeColumns() {
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS services (
+      id SERIAL PRIMARY KEY, name TEXT NOT NULL, reference_cost REAL DEFAULT 0, note TEXT DEFAULT '',
+      owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE, created_at TIMESTAMPTZ DEFAULT NOW())`);
+  } catch (e) { console.error('[DB] services 建表跳过:', e.message); }
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS contract_items (
+      id SERIAL PRIMARY KEY, contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
+      product_id INTEGER REFERENCES products(id) ON DELETE SET NULL, quantity REAL DEFAULT 0,
+      actual_price REAL DEFAULT 0, amount REAL DEFAULT 0, owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE)`);
+  } catch (e) { console.error('[DB] contract_items 建表跳过:', e.message); }
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS contract_services (
+      id SERIAL PRIMARY KEY, contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
+      service_id INTEGER REFERENCES services(id) ON DELETE SET NULL, service_name TEXT DEFAULT '',
+      amount REAL DEFAULT 0, owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE)`);
+  } catch (e) { console.error('[DB] contract_services 建表跳过:', e.message); }
+  // transactions 加 contract_id（收支关联合同，批4 录入时使用）
+  try {
+    await query('ALTER TABLE transactions ADD COLUMN contract_id INTEGER REFERENCES contracts(id) ON DELETE SET NULL');
+  } catch (e) { if (!/already exists/i.test(e.message || '')) throw e; }
+  // contracts 加 date（签订日，用于拼接合同名）/ direction（'sale' 销售 | 'purchase' 采购）
+  try { await query("ALTER TABLE contracts ADD COLUMN date TEXT DEFAULT ''"); }
+  catch (e) { if (!/already exists/i.test(e.message || '')) throw e; }
+  try { await query("ALTER TABLE contracts ADD COLUMN direction TEXT DEFAULT 'sale'"); }
+  catch (e) { if (!/already exists/i.test(e.message || '')) throw e; }
+  // 老合同无 date：用 start_date 兜底，保证拼接名至少含日期+客户
+  try { await query("UPDATE contracts SET date=start_date WHERE date IS NULL OR date=''"); }
+  catch (e) { console.error('[DB] contracts.date 兜底跳过:', e.message); }
+}
+
 // 修复历史迁移造成的孤立归属：owner_id 指向不存在用户的业务数据，统一归属到 admin
 async function fixOrphanedOwners() {
   const admin = await queryOne("SELECT id FROM users WHERE username='admin'");
@@ -683,6 +746,27 @@ async function seedForUser(uid, mode) {
   for (const [no, cid, amt, st, sd, ed] of contracts) {
     await query('INSERT INTO contracts(contract_no,customer_id,amount,status,start_date,end_date,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7)', [no, cid, amt, st, sd, ed, uid]);
   }
+  // 示例服务（与杂费类别 expense_items 完全独立的两套数据，勿混用）
+  const svcSeed = [['染色服务', 2.5, '按米计费的染色加工'], ['设计打样', 60, '款式设计打样'], ['物流配送', 8, '同城配送费']];
+  const svcIds = [];
+  for (const [nm, rc, nt] of svcSeed) {
+    const r = await insertReturning('INSERT INTO services(name,reference_cost,note,owner_id) VALUES($1,$2,$3,$4) RETURNING id', [nm, rc, nt, uid]);
+    svcIds.push(r.rows[0].id);
+  }
+  // 让首个合同成为"销售合同"演示：带商品明细 + 服务费明细，金额由明细聚合
+  const firstC = await queryOne('SELECT id FROM contracts WHERE owner_id=$1 ORDER BY id ASC LIMIT 1', [uid]);
+  if (firstC) {
+    await query("UPDATE contracts SET direction='sale', date=start_date, contract_no='' WHERE id=$1", [firstC.id]);
+    await query(
+      'INSERT INTO contract_items(contract_id,product_id,quantity,actual_price,amount,owner_id) SELECT $1, id, 100, 69, 6900, $2 FROM products WHERE owner_id=$2 AND name=$3 LIMIT 1',
+      [firstC.id, uid, '纯棉T恤']
+    );
+    await query('INSERT INTO contract_services(contract_id,service_id,service_name,amount,owner_id) VALUES($1,$2,$3,$4,$5)',
+      [firstC.id, svcIds[0], '染色服务', 250, uid]);
+    const sumI = await queryOne('SELECT COALESCE(SUM(amount),0) AS s FROM contract_items WHERE contract_id=$1 AND owner_id=$2', [firstC.id, uid]);
+    const sumS = await queryOne('SELECT COALESCE(SUM(amount),0) AS s FROM contract_services WHERE contract_id=$1 AND owner_id=$2', [firstC.id, uid]);
+    await query('UPDATE contracts SET amount=$1 WHERE id=$2', [Number(sumI.s || 0) + Number(sumS.s || 0), firstC.id]);
+  }
   const employees = [['张师傅', '裁剪工', 35, '2024-03-01'], ['李师傅', '缝纫工', 30, '2024-05-15'], ['王小妹', '包装工', 25, '2025-01-10'], ['赵主管', '管理员', 45, '2023-06-01']];
   const empIds = [];
   for (const [name, pos, rate, jd] of employees) {
@@ -757,6 +841,9 @@ async function init() {
 
   // 3.8) 老库 users 表补 company_name 列（账号绑定唯一企业）
   await ensureUserCompanyNameColumn();
+
+  // 3.9) 合同/服务升级（services / contract_items / contract_services 三表 + transactions.contract_id + contracts.date/direction）
+  await ensureContractUpgradeColumns();
 
   // 4) 首次启动：无用户则创建 admin/editor 并各自生成完整示例
   const r = await query('SELECT COUNT(*) AS c FROM users');
