@@ -367,24 +367,28 @@ const Analysis = (() => {
       $('piQty').textContent = (sales.total_qty || 0).toLocaleString();
       $('piSale').textContent = money(sales.total_sale || 0);
       $('piGm').textContent = ((sales.avg_gm || 0) * 100).toFixed(1) + '%';
-      renderProdTopTable('piQtyTop', sales.by_qty);
-      renderProdTopTable('piAmtTop', sales.by_amount);
-      renderPriceTable('piPriceTop', sales.price_change);
+      renderProdTopTable('piQtyTop', sales.by_qty, '销售数量需通过「合同录入 → 商品明细」维护');
+      renderProdTopTable('piAmtTop', sales.by_amount, null);
+      renderPriceTable('piPriceTop', sales.price_change, '需同一商品在多笔合同中有成交价');
       // 支出类 KPI
       $('ppQty').textContent = (purchase.total_qty || 0).toLocaleString();
       $('ppCost').textContent = money(purchase.total_cost || 0);
-      renderProdTopTable('ppQtyTop', purchase.by_qty);
-      renderProdTopTable('ppCostTop', purchase.by_amount);
-      renderPriceTable('ppPriceTop', purchase.price_change);
+      renderProdTopTable('ppQtyTop', purchase.by_qty, '采购数量需通过「合同录入 → 商品明细」维护');
+      renderProdTopTable('ppCostTop', purchase.by_amount, null);
+      renderPriceTable('ppPriceTop', purchase.price_change, '需同一商品在多笔合同中有成交价');
     } catch (e) {
       App.toast('商品分析加载失败：' + e.message, 'error');
     }
   }
-  // 数量/金额 TOP5 表格（同一行含 数量/金额/毛利率）
-  function renderProdTopTable(tableId, rows) {
+  // 数量/金额 TOP5 表格
+  function renderProdTopTable(tableId, rows, emptyHint) {
     const el = $(tableId);
     if (!el) return;
-    if (!rows || rows.length === 0) { el.innerHTML = '<tbody><tr><td class="empty-state" colspan="4">暂无数据</td></tr></tbody>'; return; }
+    if (!rows || rows.length === 0) {
+      const hint = emptyHint || '暂无数据';
+      el.innerHTML = `<tbody><tr><td class="empty-state" colspan="4">${escapeHtml(hint)}</td></tr></tbody>`;
+      return;
+    }
     el.innerHTML = `<thead><tr><th>商品</th><th>数量</th><th>金额</th><th>毛利率</th></tr></thead>
       <tbody>${rows.map(r => `<tr>
         <td>${escapeHtml(r.product_name || '未命名商品')}</td>
@@ -394,10 +398,14 @@ const Analysis = (() => {
       </tr>`).join('')}</tbody>`;
   }
   // 实际价变动 TOP5 表格
-  function renderPriceTable(tableId, rows) {
+  function renderPriceTable(tableId, rows, emptyHint) {
     const el = $(tableId);
     if (!el) return;
-    if (!rows || rows.length === 0) { el.innerHTML = '<tbody><tr><td class="empty-state" colspan="4">暂无价格变动数据（需同一商品在多笔合同中有成交价）</td></tr></tbody>'; return; }
+    if (!rows || rows.length === 0) {
+      const hint = emptyHint || '暂无价格变动数据';
+      el.innerHTML = `<tbody><tr><td class="empty-state" colspan="4">${escapeHtml(hint)}</td></tr></tbody>`;
+      return;
+    }
     el.innerHTML = `<thead><tr><th>商品</th><th>最低价 → 最高价</th><th>变动幅度</th><th>样本数</th></tr></thead>
       <tbody>${rows.map(r => `<tr>
         <td>${escapeHtml(r.product_name || '未命名商品')}</td>

@@ -345,8 +345,16 @@
           </div>
         </div>
         <div class="ana-tab-bar" id="prodTabs">
-          <div class="ana-tab active" data-tab="income">收入类（销售）</div>
-          <div class="ana-tab" data-tab="purchase">支出类（采购）</div>
+          <div class="ana-tab active" data-tab="income">
+            <div class="ana-tab-icon">📈</div>
+            <div class="ana-tab-title">收入类（销售）</div>
+            <div class="ana-tab-sub">销售总额 / 毛利率 / TOP5</div>
+          </div>
+          <div class="ana-tab" data-tab="purchase">
+            <div class="ana-tab-icon">📉</div>
+            <div class="ana-tab-title">支出类（采购）</div>
+            <div class="ana-tab-sub">采购总额 / TOP5</div>
+          </div>
         </div>
 
         <!-- 收入类 -->
@@ -718,23 +726,44 @@
 
       <!-- ===== 合同管理 ===== -->
       <section class="page-section" id="page-contract">
-        <div class="page-title">合同管理</div>
-        <div class="metric-grid row3">
-          <div class="metric-card primary"><div class="m-name">合同总数</div><div class="m-value" id="contractCount">0</div></div>
-          <div class="metric-card"><div class="m-name">合同总金额</div><div class="m-value" id="contractAmount">¥ 0</div></div>
-          <div class="metric-card"><div class="m-name">进行中</div><div class="m-value positive" id="contractActive">0</div></div>
+        <div class="page-toolbar">
+          <div>
+            <div class="page-title">合同管理</div>
+            <div class="page-subtitle">销售 / 采购合同录入、查询、关联收支记录</div>
+          </div>
         </div>
-        <div class="query-toolbar">
-          <input type="text" class="form-input" id="contractQCustomer" placeholder="客户名称" style="width:160px;">
-          <select class="form-select" id="contractQDirection" style="width:120px;">
-            <option value="">全部方向</option>
-            <option value="sale">销售</option>
-            <option value="purchase">采购</option>
-          </select>
-          <button class="btn btn-secondary btn-sm" id="contractResetBtn">重置</button>
-          <button class="btn btn-primary btn-sm" onclick="Business.openContractModal()">+ 添加合同</button>
+        <!-- 子页面切换 -->
+        <div class="sub-nav-bar" id="contractSubNav">
+          <div class="sub-nav-tab active" data-sub="entry">📝 合同录入</div>
+          <div class="sub-nav-tab" data-sub="query">🔍 合同查询</div>
         </div>
-        <div class="table-wrap"><table class="data-table" id="contractTable"></table></div>
+        <!-- 子页 1: 合同录入 -->
+        <div class="sub-page" id="contractSubEntry">
+          <div class="setting-desc" style="margin-bottom:12px;">在这里录入新的销售 / 采购合同。带明细的合同会自动按「日期-客户-首项明细等」生成合同名。</div>
+          <button class="btn btn-primary" onclick="Business.openContractModal()">+ 添加合同</button>
+          <div class="ana-card" style="margin-top:14px;">
+            <div class="ana-card-title">最近录入的合同（最近 5 条）</div>
+            <div class="table-wrap"><table class="data-table" id="contractRecentTable"></table></div>
+          </div>
+        </div>
+        <!-- 子页 2: 合同查询 -->
+        <div class="sub-page" id="contractSubQuery" style="display:none;">
+          <div class="metric-grid row3">
+            <div class="metric-card primary"><div class="m-name">合同总数</div><div class="m-value" id="contractCount">0</div></div>
+            <div class="metric-card"><div class="m-name">合同总金额</div><div class="m-value" id="contractAmount">¥ 0</div></div>
+            <div class="metric-card"><div class="m-name">进行中</div><div class="m-value positive" id="contractActive">0</div></div>
+          </div>
+          <div class="query-toolbar">
+            <input type="text" class="form-input" id="contractQCustomer" placeholder="客户名称" style="width:160px;">
+            <select class="form-select" id="contractQDirection" style="width:120px;">
+              <option value="">全部方向</option>
+              <option value="sale">销售</option>
+              <option value="purchase">采购</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" id="contractResetBtn">重置</button>
+          </div>
+          <div class="table-wrap"><table class="data-table" id="contractTable"></table></div>
+        </div>
       </section>
 
       <!-- ===== 服务管理 ===== -->

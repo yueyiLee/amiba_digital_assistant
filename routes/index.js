@@ -838,24 +838,44 @@ router.get('/contracts/suggest', async (req, res) => {
 
 /* ========== 8c. 商品分析聚合（收入类 / 支出类，基于 contract_items） ========== */
 async function productAnalysis(ownerId, direction, sd, ed) {
-  const rows = await db.queryAll(`
-    SELECT ci.product_id, p.name AS product_name,
-           SUM(ci.quantity) AS total_qty,
-           SUM(ci.quantity * ci.actual_price) AS total_amount,
-           SUM(ci.quantity * COALESCE(p.purchase_price, 0)) AS total_cost
-    FROM contract_items ci
-    JOIN contracts co ON ci.contract_id = co.id
-    LEFT JOIN products p ON ci.product_id = p.id
-    WHERE co.owner_id=$1 AND co.direction=$2 AND co.date BETWEEN $3 AND $4
-    GROUP BY ci.product_id, p.name
-    ORDER BY total_amount DESC`, [ownerId, direction, sd, ed]);
-  const series = await db.queryAll(`
-    SELECT ci.product_id, p.name AS product_name, co.date, ci.actual_price
-    FROM contract_items ci
-    JOIN contracts co ON ci.contract_id = co.id
-    LEFT JOIN products p ON ci.product_id = p.id
-    WHERE co.owner_id=$1 AND co.direction=$2 AND co.date BETWEEN $3 AND $4
-    ORDER BY ci.product_id, co.date`, [ownerId, direction, sd, ed]);
+  const isSale = direction === 'sale';
+  // 1) 总额走 transactions（合同可能未补全，但收支记录一定有）。
+  //    销售：type='销售收入' AND amount>0；
+  //    采购：type='材料采购' AND amount<0（用 abs 累加）。
+  //    不强制 product_id：历史录入的销售收入可能没填商品，但金额依然要计入"销售总额"。
+  const totalAmtRow = isSale
+    ? await db.queryOne(`SELECT COALESCE(SUM(amount), 0) AS s FROM transactions
+        WHERE owner_id=$1 AND type='销售收入' AND amount>0 AND date BETWEEN $2 AND $3`, [ownerId, sd, ed])
+    : await db.queryOne(`SELECT COALESCE(SUM(ABS(amount)), 0) AS s FROM transactions
+        WHERE owner_id=$1 AND type='材料采购' AND amount<0 AND date BETWEEN $2 AND $3`, [ownerId, sd, ed]);
+  const totalAmount = Number(totalAmtRow && totalAmtRow.s) || 0;
+
+  // 2) 按商品聚合金额（TOP5 来源）——只聚合"已选商品"的交易
+  const byAmtRows = isSale
+    ? await db.queryAll(`SELECT t.product_id, p.name AS product_name, SUM(t.amount) AS amt
+        FROM transactions t LEFT JOIN products p ON t.product_id = p.id
+        WHERE t.owner_id=$1 AND t.type='销售收入' AND t.amount>0 AND t.product_id IS NOT NULL AND t.date BETWEEN $2 AND $3
+        GROUP BY t.product_id, p.name ORDER BY amt DESC LIMIT 100`, [ownerId, sd, ed])
+    : await db.queryAll(`SELECT t.product_id, p.name AS product_name, SUM(ABS(t.amount)) AS amt
+        FROM transactions t LEFT JOIN products p ON t.product_id = p.id
+        WHERE t.owner_id=$1 AND t.type='材料采购' AND t.amount<0 AND t.product_id IS NOT NULL AND t.date BETWEEN $2 AND $3
+        GROUP BY t.product_id, p.name ORDER BY amt DESC LIMIT 100`, [ownerId, sd, ed]);
+
+  // 3) 数量、价格变动仍走合同（因为 transactions 没有 quantity 字段）
+  const qtyRows = await db.queryAll(`SELECT ci.product_id, p.name AS product_name,
+      SUM(ci.quantity) AS qty, SUM(ci.quantity * ci.actual_price) AS amt
+      FROM contract_items ci
+      JOIN contracts co ON ci.contract_id = co.id
+      LEFT JOIN products p ON ci.product_id = p.id
+      WHERE co.owner_id=$1 AND co.direction=$2 AND co.date BETWEEN $3 AND $4
+      GROUP BY ci.product_id, p.name ORDER BY amt DESC`, [ownerId, direction, sd, ed]);
+
+  const series = await db.queryAll(`SELECT ci.product_id, p.name AS product_name, co.date, ci.actual_price
+      FROM contract_items ci
+      JOIN contracts co ON ci.contract_id = co.id
+      LEFT JOIN products p ON ci.product_id = p.id
+      WHERE co.owner_id=$1 AND co.direction=$2 AND co.date BETWEEN $3 AND $4
+      ORDER BY ci.product_id, co.date`, [ownerId, direction, sd, ed]);
   const byPid = {};
   series.forEach(s => { (byPid[s.product_id] = byPid[s.product_id] || []).push({ date: s.date, price: Number(s.actual_price) || 0, name: s.product_name }); });
   const priceChange = Object.values(byPid).map(arr => {
@@ -865,21 +885,27 @@ async function productAnalysis(ownerId, direction, sd, ed) {
     const change = min > 0 ? (max - min) / min : 0;
     return { product_name: arr[0].name, change, min, max, samples: arr.length };
   }).filter(Boolean).sort((a, b) => b.change - a.change).slice(0, 5);
-  const metrics = rows.map(r => ({
-    product_id: r.product_id, product_name: r.product_name,
-    total_qty: Number(r.total_qty) || 0,
-    total_amount: Number(r.total_amount) || 0,
-    total_cost: Number(r.total_cost) || 0,
-    gm: (Number(r.total_amount) || 0) > 0 ? ((Number(r.total_amount) - Number(r.total_cost)) / Number(r.total_amount)) : 0
-  }));
-  const totalSale = metrics.reduce((s, r) => s + r.total_amount, 0);
-  const totalCost = metrics.reduce((s, r) => s + r.total_cost, 0);
-  const totalQty = metrics.reduce((s, r) => s + r.total_qty, 0);
-  const avgGm = totalSale > 0 ? (totalSale - totalCost) / totalSale : 0;
+
+  // 4) 成本/毛利率：销售类的"对应成本"=同期材料采购 abs(amount)（不强制商品）
+  //    采购类的 total_cost 即为自身
+  const costRow = await db.queryOne(`SELECT COALESCE(SUM(ABS(amount)), 0) AS c FROM transactions
+      WHERE owner_id=$1 AND type='材料采购' AND amount<0 AND date BETWEEN $2 AND $3`, [ownerId, sd, ed]);
+  const totalCost = Number(costRow && costRow.c) || 0;
+  const totalQty = qtyRows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
+  const avgGm = isSale && totalAmount > 0 ? Math.max(0, (totalAmount - totalCost) / totalAmount) : 0;
+
+  // 5) 输出
+  const byQty = qtyRows.slice().sort((a, b) => Number(b.qty) - Number(a.qty)).slice(0, 5)
+    .map(r => ({ product_id: r.product_id, product_name: r.product_name, total_qty: Number(r.qty) || 0, total_amount: Number(r.amt) || 0 }));
+  const byAmount = byAmtRows.slice(0, 5)
+    .map(r => ({ product_id: r.product_id, product_name: r.product_name, total_amount: Number(r.amt) || 0 }));
   return {
-    total_sale: totalSale, total_cost: totalCost, total_qty: totalQty, avg_gm: avgGm,
-    by_qty: metrics.slice().sort((a, b) => b.total_qty - a.total_qty).slice(0, 5),
-    by_amount: metrics.slice(0, 5),
+    total_sale: totalAmount,
+    total_cost: isSale ? totalCost : totalAmount,
+    total_qty: totalQty,
+    avg_gm: avgGm,
+    by_qty: byQty,
+    by_amount: byAmount,
     price_change: priceChange
   };
 }

@@ -12,6 +12,8 @@ const Business = (() => {
   let inventoryFilter = { product: '' };
   let currentCustomerRows = [];
   let currentProductRows = [];
+  // 合同管理子页面：'entry' 录入页 / 'query' 查询页
+  let contractSubTab = 'entry';
 
   function render() {
     renderContracts();
@@ -29,6 +31,62 @@ const Business = (() => {
   }
 
   // ========== 合同 ==========
+  function renderContract() {
+    bindContractSubNav();
+    switchContractSubTab(contractSubTab, false);
+  }
+  function bindContractSubNav() {
+    const bar = document.getElementById('contractSubNav');
+    if (!bar || bar.dataset.bound === '1') return;
+    bar.dataset.bound = '1';
+    bar.querySelectorAll('.sub-nav-tab').forEach(el => {
+      el.addEventListener('click', () => switchContractSubTab(el.dataset.sub));
+    });
+    const qc = document.getElementById('contractQCustomer');
+    if (qc) qc.addEventListener('input', e => { contractFilter.customer = e.target.value.trim(); renderContracts(); });
+    const qd = document.getElementById('contractQDirection');
+    if (qd) qd.addEventListener('change', e => { contractFilter.direction = e.target.value; renderContracts(); });
+    const r = document.getElementById('contractResetBtn');
+    if (r) r.addEventListener('click', () => {
+      contractFilter = { customer: '', direction: '' };
+      if (qc) qc.value = ''; if (qd) qd.value = '';
+      renderContracts();
+    });
+  }
+  function switchContractSubTab(name, reRender = true) {
+    contractSubTab = name;
+    const bar = document.getElementById('contractSubNav');
+    if (bar) bar.querySelectorAll('.sub-nav-tab').forEach(el => el.classList.toggle('active', el.dataset.sub === name));
+    const e = document.getElementById('contractSubEntry');
+    const q = document.getElementById('contractSubQuery');
+    if (e) e.style.display = name === 'entry' ? '' : 'none';
+    if (q) q.style.display = name === 'query' ? '' : 'none';
+    if (reRender) {
+      if (name === 'entry') renderContractRecent();
+      else renderContracts();
+    }
+  }
+  function renderContractRecent() {
+    const tbl = document.getElementById('contractRecentTable');
+    if (!tbl) return;
+    const list = Storage.getContractsSync().slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.id - a.id)).slice(0, 5);
+    if (list.length === 0) { tbl.innerHTML = '<tr><td class="empty-state">暂无合同，点击上方"添加合同"开始录入</td></tr>'; return; }
+    tbl.innerHTML = `<thead><tr><th>合同名</th><th>客户</th><th>方向</th><th>金额</th><th>签订日期</th><th>操作</th></tr></thead>
+      <tbody>${list.map(c => {
+        const dir = c.direction || 'sale';
+        const dirLabel = dir === 'purchase' ? '采购' : '销售';
+        const amtCls = dir === 'purchase' ? 'neg' : 'pos';
+        return `<tr>
+          <td>${escapeHtml(c.display_name || '—')}</td>
+          <td>${escapeHtml(c.customer_name || '—')}</td>
+          <td><span class="badge ${dir === 'purchase' ? 'gray' : 'p'}">${dirLabel}</span></td>
+          <td class="amt ${amtCls}">${Calculator.fmtMoney(c.amount)}</td>
+          <td>${c.date || c.start_date || '—'}</td>
+          <td>${Auth.canEdit() ? `<button class="btn btn-secondary btn-sm" onclick="Business.openContractModal(${c.id})">编辑</button> <button class="btn btn-danger btn-sm" onclick="Business.delContract(${c.id})">删</button>` : '—'}</td>
+        </tr>`;
+      }).join('')}</tbody>`;
+  }
+
   function renderContracts() {
     let list = Storage.getContractsSync();
     if (contractFilter.customer) list = list.filter(c => (c.customer_name || '').toLowerCase().includes(contractFilter.customer.toLowerCase()));
@@ -58,28 +116,38 @@ const Business = (() => {
 
   function sel2(v) { return (x) => x === v ? ' selected' : ''; }
 
+  // 商品明细行：使用 datalist 让商品名支持模糊搜索（输入即搜），不再使用 select
   function contractItemRowHtml(products, it, i) {
     const pid = it && it.product_id ? it.product_id : '';
+    const sel = products.find(p => p.id === pid);
+    const productName = sel ? sel.name : (it && it.product_name ? it.product_name : '');
     const qty = it ? (Number(it.quantity) || 0) : 0;
     const price = it ? (Number(it.actual_price) || 0) : 0;
-    return `<div class="sub-row" data-idx="${i}">
-      <select class="form-select ci-product">${products.map(p => `<option value="${p.id}"${p.id === pid ? ' selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}</select>
-      <input type="number" class="form-input ci-qty" min="0" step="0.01" value="${qty}" placeholder="数量">
-      <input type="number" class="form-input ci-price" min="0" step="0.01" value="${price}" placeholder="实际单价">
-      <button type="button" class="btn btn-danger btn-sm" onclick="this.parentNode.remove()">×</button>
+    const datalistId = 'productList_' + Math.random().toString(36).slice(2, 8);
+    return `<div class="sub-row sub-row-item" data-idx="${i}">
+      <input type="text" class="form-input ci-product" list="${datalistId}" placeholder="输入商品名称（支持模糊搜索）" value="${escapeHtml(productName)}" autocomplete="off">
+      <datalist id="${datalistId}">${products.map(p => `<option value="${escapeHtml(p.name)}" data-pid="${p.id}">`).join('')}</datalist>
+      <input type="hidden" class="ci-product-id" value="${pid}">
+      <input type="number" class="form-input ci-qty" min="0" step="0.01" value="${qty || ''}" placeholder="数量">
+      <input type="number" class="form-input ci-price" min="0" step="0.01" value="${price || ''}" placeholder="实际交易金额">
+      <button type="button" class="btn btn-danger btn-sm ci-del" onclick="this.closest('.sub-row').remove()">×</button>
     </div>`;
   }
 
+  // 服务费明细行：2 列 — 服务（从服务管理下拉选）/ 实际服务费用
   function contractSvcRowHtml(services, sv, i) {
     const sid = sv && sv.service_id ? sv.service_id : '';
-    const sname = sv && sv.service_name ? sv.service_name : '';
+    const sel = services.find(s => s.id === sid);
+    const sname = sel ? sel.name : (sv && sv.service_name ? sv.service_name : '');
     const amt = sv ? (Number(sv.amount) || 0) : 0;
     const opts = services.map(s => `<option value="${s.id}"${s.id === sid ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('');
-    return `<div class="sub-row" data-idx="${i}">
-      <select class="form-select cs-service">${opts ? `<option value="">手动输入服务名</option>${opts}` : `<option value="">（请先在「服务管理」添加服务）</option>`}</select>
-      <input type="text" class="form-input cs-name" placeholder="服务名（未选服务时填）" value="${escapeHtml(sname)}">
-      <input type="number" class="form-input cs-amt" min="0" step="0.01" value="${amt}" placeholder="金额">
-      <button type="button" class="btn btn-danger btn-sm" onclick="this.parentNode.remove()">×</button>
+    const noSvc = services.length === 0;
+    return `<div class="sub-row sub-row-svc" data-idx="${i}">
+      <select class="form-select cs-service"${noSvc ? ' disabled' : ''}>
+        <option value="">${noSvc ? '（请先在「服务管理」添加服务）' : '— 请选择服务 —'}</option>${opts}
+      </select>
+      <input type="number" class="form-input cs-amt" min="0" step="0.01" value="${amt || ''}" placeholder="实际服务费用（¥）">
+      <button type="button" class="btn btn-danger btn-sm" onclick="this.closest('.sub-row').remove()">×</button>
     </div>`;
   }
 
@@ -97,26 +165,43 @@ const Business = (() => {
     const el = document.getElementById('contractSvcs');
     if (el) el.appendChild(div.firstElementChild);
   }
+  // 商品明细收集：名称 → 匹配 product_id（精确匹配优先，否则忽略大小写包含匹配）
   function collectContractItems() {
+    const products = Storage.getProductOptions();
+    const byName = {};
+    products.forEach(p => { byName[p.name] = p; });
     const out = [];
-    document.querySelectorAll('#contractItems .sub-row').forEach(r => {
-      const pid = Number(r.querySelector('.ci-product').value);
-      if (!pid) return;
-      out.push({ product_id: pid, quantity: parseFloat(r.querySelector('.ci-qty').value) || 0, actual_price: parseFloat(r.querySelector('.ci-price').value) || 0 });
+    document.querySelectorAll('#contractItems .sub-row-item').forEach(r => {
+      const name = (r.querySelector('.ci-product').value || '').trim();
+      const qty = parseFloat(r.querySelector('.ci-qty').value) || 0;
+      const price = parseFloat(r.querySelector('.ci-price').value) || 0;
+      const explicitPid = Number(r.querySelector('.ci-product-id').value) || 0;
+      let pid = explicitPid;
+      if (!pid && name) {
+        const exact = byName[name];
+        if (exact) pid = exact.id;
+        else {
+          const fuzzy = products.find(p => p.name.toLowerCase().includes(name.toLowerCase()));
+          if (fuzzy) pid = fuzzy.id;
+        }
+      }
+      if (!pid) return; // 没匹配上商品 → 跳过（不能存）
+      out.push({ product_id: pid, quantity: qty, actual_price: price });
     });
     return out;
   }
+  // 服务费收集：仅从服务下拉里选，金额直接录入
   function collectContractSvcs() {
+    const services = Storage.getServiceOptions();
+    const byId = {};
+    services.forEach(s => { byId[s.id] = s; });
     const out = [];
-    const svcOpts = Storage.getServiceOptions();
-    document.querySelectorAll('#contractSvcs .sub-row').forEach(r => {
-      const sid = r.querySelector('.cs-service').value;
-      const name = (r.querySelector('.cs-name').value || '').trim();
+    document.querySelectorAll('#contractSvcs .sub-row-svc').forEach(r => {
+      const sid = Number(r.querySelector('.cs-service').value) || 0;
       const amt = parseFloat(r.querySelector('.cs-amt').value) || 0;
-      const service_id = sid ? Number(sid) : null;
-      const finalName = service_id ? (svcOpts.find(s => s.id === service_id) ? svcOpts.find(s => s.id === service_id).name : name) : name;
-      if (!service_id && !finalName) return;
-      out.push({ service_id, service_name: finalName, amount: amt });
+      if (!sid) return; // 未选服务则跳过
+      const svc = byId[sid];
+      out.push({ service_id: sid, service_name: svc ? svc.name : '', amount: amt });
     });
     return out;
   }
@@ -142,10 +227,21 @@ const Business = (() => {
       <div class="form-group"><label class="form-label">状态</label><select class="form-select" id="m-status"><option${s('进行中')}>进行中</option><option${s('已完成')}>已完成</option><option${s('已终止')}>已终止</option></select></div>
 
       <div class="sub-block-title">商品明细 <span class="text-muted">（销售合同填卖出商品 / 采购合同填买入商品）</span></div>
+      <div class="sub-row sub-row-head sub-row-item">
+        <div class="ci-label">商品</div>
+        <div class="ci-label">数量</div>
+        <div class="ci-label">实际交易金额</div>
+        <div></div>
+      </div>
       <div id="contractItems">${itemRowsHtml || '<div class="text-muted" style="font-size:12px;">暂无明细，点击下方按钮添加</div>'}</div>
       <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="Business.addContractItemRow()">+ 添加商品明细</button>
 
       <div class="sub-block-title" style="margin-top:14px;">服务费明细</div>
+      <div class="sub-row sub-row-head sub-row-svc">
+        <div class="ci-label">服务（从服务管理选）</div>
+        <div class="ci-label">实际服务费用（¥）</div>
+        <div></div>
+      </div>
       <div id="contractSvcs">${svcRowsHtml || '<div class="text-muted" style="font-size:12px;">暂无服务费，点击下方按钮添加</div>'}</div>
       <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="Business.addContractSvcRow()">+ 添加服务费</button>
 
@@ -164,7 +260,7 @@ const Business = (() => {
       if (edit) await API.put('/contracts/' + id, data);
       else await API.post('/contracts', data);
       await Storage.refreshCache();
-      renderContracts();
+      switchContractSubTab(contractSubTab);
       App.closeModal();
       App.toast(edit ? '合同已更新' : '合同已添加', 'success');
     });
@@ -174,7 +270,7 @@ const Business = (() => {
     if (!confirm('确认删除该合同？关联的商品/服务费明细将一并删除。')) return;
     await API.del('/contracts/' + id);
     await Storage.refreshCache();
-    renderContracts();
+    switchContractSubTab(contractSubTab);
     App.toast('已删除', 'success');
   }
 
