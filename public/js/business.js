@@ -134,7 +134,8 @@ const Business = (() => {
     document.getElementById('contractAmount').textContent = Calculator.fmtMoney(list.reduce((s, c) => s + (Number(c.amount) || 0), 0));
     document.getElementById('contractActive').textContent = list.filter(c => c.status === '进行中').length;
 
-    const tbl = document.getElementById('contractTable');
+    const tbl = document.getElementById('contractQueryTable');
+    if (!tbl) return;
     if (list.length === 0) { tbl.innerHTML = '<tr><td colspan="6" class="empty-state">暂无合同</td></tr>'; return; }
     tbl.innerHTML = `<thead><tr><th>合同名</th><th>客户</th><th>金额</th><th>方向</th><th>签订日期</th><th>操作</th></tr></thead>
       <tbody>${list.map(c => {
