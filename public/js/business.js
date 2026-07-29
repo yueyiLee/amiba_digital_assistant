@@ -14,6 +14,9 @@ const Business = (() => {
   let currentProductRows = [];
   // 合同录入页：当前正在编辑的合同 id（null = 新建）
   let contractEditId = null;
+  // 明细容器空状态文案
+  const EMPTY_ITEMS_HTML = '<div class="text-muted ci-empty">暂无明细，点击下方按钮添加</div>';
+  const EMPTY_SVCS_HTML  = '<div class="text-muted ci-empty">暂无服务费，点击下方按钮添加</div>';
 
   function render() {
     renderContracts();
@@ -50,9 +53,9 @@ const Business = (() => {
     const st = document.getElementById('m-status'); if (st) st.value = '进行中';
     const nt = document.getElementById('m-note'); if (nt) nt.value = '';
     const itemsBox = document.getElementById('contractItems');
-    if (itemsBox) itemsBox.innerHTML = '<div class="text-muted ci-empty">暂无明细，点击下方按钮添加</div>';
+    if (itemsBox) itemsBox.innerHTML = EMPTY_ITEMS_HTML;
     const svcsBox = document.getElementById('contractSvcs');
-    if (svcsBox) svcsBox.innerHTML = '<div class="text-muted ci-empty">暂无服务费，点击下方按钮添加</div>';
+    if (svcsBox) svcsBox.innerHTML = EMPTY_SVCS_HTML;
   }
   // 供查询页「编辑」按钮调用：跳到录入页 + 把表单填好
   function editContractOnAddPage(id) {
@@ -78,13 +81,13 @@ const Business = (() => {
     if (itemsBox) {
       itemsBox.innerHTML = items.length
         ? items.map((it, i) => contractItemRowHtml(products, it, i)).join('')
-        : '<div class="text-muted ci-empty">暂无明细，点击下方按钮添加</div>';
+        : EMPTY_ITEMS_HTML;
     }
     const svcsBox = document.getElementById('contractSvcs');
     if (svcsBox) {
       svcsBox.innerHTML = svcs.length
         ? svcs.map((sv, i) => contractSvcRowHtml(services, sv, i)).join('')
-        : '<div class="text-muted ci-empty">暂无服务费，点击下方按钮添加</div>';
+        : EMPTY_SVCS_HTML;
     }
   }
   async function saveContract() {
@@ -153,55 +156,99 @@ const Business = (() => {
   function sel2(v) { return (x) => x === v ? ' selected' : ''; }
   // (保留) sel2 用于客户/商品等编辑下拉默认选中
 
+  // ============ 合同录入：明细行辅助函数 ============
+  // 数字保留 2 位小数的展示（用于金额、数量失焦时统一规范）
+  function formatMoney2(input) {
+    const v = input.value;
+    if (v === '' || v == null) return;
+    const n = parseFloat(v);
+    if (isNaN(n)) { input.value = ''; return; }
+    input.value = n.toFixed(2);
+  }
+  // 服务下拉切换：自动把服务的参考费用填到本行 readOnly 输入
+  function onServiceChange(sel) {
+    const services = Storage.getServiceOptions();
+    const sid = Number(sel.value) || 0;
+    const svc = services.find(s => s.id === sid);
+    const row = sel.closest('.sub-row');
+    if (!row) return;
+    const refInput = row.querySelector('.cs-ref');
+    if (refInput) refInput.value = svc ? Number(svc.reference_cost || 0).toFixed(2) : '';
+  }
+  // 删除一行：行数为 0 时回填占位提示
+  function removeSubRow(btn) {
+    const row = btn.closest('.sub-row');
+    if (!row) return;
+    const box = row.parentElement;
+    row.remove();
+    if (box && box.children.length === 0) {
+      if (box.id === 'contractItems') box.innerHTML = EMPTY_ITEMS_HTML;
+      else if (box.id === 'contractSvcs') box.innerHTML = EMPTY_SVCS_HTML;
+    }
+  }
+
   // 商品明细行：使用 datalist 让商品名支持模糊搜索（输入即搜），不再使用 select
   function contractItemRowHtml(products, it, i) {
     const pid = it && it.product_id ? it.product_id : '';
     const sel = products.find(p => p.id === pid);
     const productName = sel ? sel.name : (it && it.product_name ? it.product_name : '');
-    const qty = it ? (Number(it.quantity) || 0) : 0;
-    const price = it ? (Number(it.actual_price) || 0) : 0;
+    const qtyNum = it ? (Number(it.quantity) || 0) : 0;
+    const priceNum = it ? (Number(it.actual_price) || 0) : 0;
+    const qtyStr = qtyNum ? qtyNum.toFixed(2) : '';
+    const priceStr = priceNum ? priceNum.toFixed(2) : '';
     const datalistId = 'productList_' + Math.random().toString(36).slice(2, 8);
     return `<div class="sub-row sub-row-item" data-idx="${i}">
       <input type="text" class="form-input ci-product" list="${datalistId}" placeholder="输入商品名称（支持模糊搜索）" value="${escapeHtml(productName)}" autocomplete="off">
       <datalist id="${datalistId}">${products.map(p => `<option value="${escapeHtml(p.name)}" data-pid="${p.id}">`).join('')}</datalist>
       <input type="hidden" class="ci-product-id" value="${pid}">
-      <input type="number" class="form-input ci-qty" min="0" step="0.01" value="${qty || ''}" placeholder="数量">
-      <input type="number" class="form-input ci-price" min="0" step="0.01" value="${price || ''}" placeholder="实际交易金额">
-      <button type="button" class="ci-del-btn" title="删除该明细" onclick="this.closest('.sub-row').remove()">删除</button>
+      <input type="number" class="form-input ci-qty" min="0" step="0.01" value="${qtyStr}" placeholder="数量" onblur="Business.formatMoney2(this)">
+      <input type="number" class="form-input ci-price" min="0" step="0.01" value="${priceStr}" placeholder="实际交易金额" onblur="Business.formatMoney2(this)">
+      <button type="button" class="ci-del-btn" title="删除该明细" onclick="Business.removeSubRow(this)">删除</button>
     </div>`;
   }
 
-  // 服务费明细行：2 列 — 服务（从服务管理下拉选）/ 实际服务费用
+  // 服务费明细行：4 列 — 服务 / 参考费用(readOnly) / 实际服务费用 / 操作
   function contractSvcRowHtml(services, sv, i) {
     const sid = sv && sv.service_id ? sv.service_id : '';
     const sel = services.find(s => s.id === sid);
     const sname = sel ? sel.name : (sv && sv.service_name ? sv.service_name : '');
-    const amt = sv ? (Number(sv.amount) || 0) : 0;
+    const refCostNum = sel ? (Number(sel.reference_cost) || 0) : 0;
+    const refCostStr = sel ? refCostNum.toFixed(2) : '';
+    const amtNum = sv ? (Number(sv.amount) || 0) : 0;
+    const amtStr = amtNum ? amtNum.toFixed(2) : '';
     const opts = services.map(s => `<option value="${s.id}"${s.id === sid ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('');
     const noSvc = services.length === 0;
     return `<div class="sub-row sub-row-svc" data-idx="${i}">
-      <select class="form-select cs-service"${noSvc ? ' disabled' : ''}>
+      <select class="form-select cs-service"${noSvc ? ' disabled' : ''} onchange="Business.onServiceChange(this)">
         <option value="">${noSvc ? '（请先在「服务管理」添加服务）' : '— 请选择服务 —'}</option>${opts}
       </select>
-      <input type="number" class="form-input cs-amt" min="0" step="0.01" value="${amt || ''}" placeholder="实际服务费用（¥）">
-      <button type="button" class="ci-del-btn" title="删除该服务费" onclick="this.closest('.sub-row').remove()">删除</button>
+      <input type="text" class="form-input cs-ref" value="${refCostStr}" placeholder="${noSvc ? '-' : '选服务后自动填'}" readonly tabindex="-1">
+      <input type="number" class="form-input cs-amt" min="0" step="0.01" value="${amtStr}" placeholder="实际服务费用" onblur="Business.formatMoney2(this)">
+      <button type="button" class="ci-del-btn" title="删除该服务费" onclick="Business.removeSubRow(this)">删除</button>
     </div>`;
   }
 
   function addContractItemRow() {
     const products = Storage.getProductOptions();
+    const el = document.getElementById('contractItems');
+    if (!el) return;
+    // 先去掉占位提示（如果还在）
+    const ph = el.querySelector('.ci-empty'); if (ph) ph.remove();
     const div = document.createElement('div');
     div.innerHTML = contractItemRowHtml(products, null, Date.now());
-    const el = document.getElementById('contractItems');
-    if (el) el.appendChild(div.firstElementChild);
+    el.appendChild(div.firstElementChild);
   }
   function addContractSvcRow() {
     const services = Storage.getServiceOptions();
+    const el = document.getElementById('contractSvcs');
+    if (!el) return;
+    const ph = el.querySelector('.ci-empty'); if (ph) ph.remove();
     const div = document.createElement('div');
     div.innerHTML = contractSvcRowHtml(services, null, Date.now());
-    const el = document.getElementById('contractSvcs');
-    if (el) el.appendChild(div.firstElementChild);
+    el.appendChild(div.firstElementChild);
   }
+  // 数字统一保留 2 位（用于保存到后端）
+  function n2(v) { const n = parseFloat(v); return isNaN(n) ? 0 : Number(n.toFixed(2)); }
   // 商品明细收集：名称 → 匹配 product_id（精确匹配优先，否则忽略大小写包含匹配）
   function collectContractItems() {
     const products = Storage.getProductOptions();
@@ -210,8 +257,8 @@ const Business = (() => {
     const out = [];
     document.querySelectorAll('#contractItems .sub-row-item').forEach(r => {
       const name = (r.querySelector('.ci-product').value || '').trim();
-      const qty = parseFloat(r.querySelector('.ci-qty').value) || 0;
-      const price = parseFloat(r.querySelector('.ci-price').value) || 0;
+      const qty = n2(r.querySelector('.ci-qty').value);
+      const price = n2(r.querySelector('.ci-price').value);
       const explicitPid = Number(r.querySelector('.ci-product-id').value) || 0;
       let pid = explicitPid;
       if (!pid && name) {
@@ -227,7 +274,7 @@ const Business = (() => {
     });
     return out;
   }
-  // 服务费收集：仅从服务下拉里选，金额直接录入
+  // 服务费收集：仅从服务下拉里选，金额直接录入（参考费用不存，仅展示）
   function collectContractSvcs() {
     const services = Storage.getServiceOptions();
     const byId = {};
@@ -235,7 +282,7 @@ const Business = (() => {
     const out = [];
     document.querySelectorAll('#contractSvcs .sub-row-svc').forEach(r => {
       const sid = Number(r.querySelector('.cs-service').value) || 0;
-      const amt = parseFloat(r.querySelector('.cs-amt').value) || 0;
+      const amt = n2(r.querySelector('.cs-amt').value);
       if (!sid) return; // 未选服务则跳过
       const svc = byId[sid];
       out.push({ service_id: sid, service_name: svc ? svc.name : '', amount: amt });
@@ -1013,7 +1060,8 @@ const Business = (() => {
            openProductModal, onCat1Change, delProduct, editInventory, openInventoryModal, delInventory,
            renderExpenseItems, openMiscItemModal, delMiscItem,
            renderExpenseTypes, openExpenseTypeModal, delExpenseType, toggleExpenseType,
-           renderServices, openServiceModal, delService, addContractItemRow, addContractSvcRow, resetServiceFilters,
+           renderServices, openServiceModal, delService, addContractItemRow, addContractSvcRow,
+           onServiceChange, formatMoney2, removeSubRow, resetServiceFilters,
            renderCustomerAdd, renderCustomerQuery, saveCustomerDirect,
            renderProductAdd, renderProductQuery, onCat1ChangeAdd, saveProductDirect,
            renderContractAdd, renderContractQuery, saveContract, clearContractForm, editContractOnAddPage,

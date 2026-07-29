@@ -235,9 +235,18 @@ body {
 
 /* 合同明细：grid 布局对齐列标题 */
 .sub-row.sub-row-item { display: grid; grid-template-columns: 2fr 0.9fr 1.2fr 72px; gap: 8px; align-items: center; margin-bottom: 6px; }
-.sub-row.sub-row-svc  { display: grid; grid-template-columns: 2fr 1.2fr 72px; gap: 8px; align-items: center; margin-bottom: 6px; }
+.sub-row.sub-row-svc  { display: grid; grid-template-columns: 1.8fr 1fr 1.2fr 72px; gap: 8px; align-items: center; margin-bottom: 6px; }
 .sub-row.sub-row-item .ci-product { width: 100%; }
 .sub-row.sub-row-item .ci-qty, .sub-row.sub-row-item .ci-price { width: 100%; }
+.sub-row.sub-row-svc .cs-service { width: 100%; }
+.sub-row.sub-row-svc .cs-ref, .sub-row.sub-row-svc .cs-amt { width: 100%; }
+/* 参考费用只读：灰底、不可点 */
+.cs-ref[readonly] {
+  background: #f1f5f9 !important;
+  color: #475569;
+  cursor: not-allowed;
+  text-align: right;
+}
 
 /* 表头：明显加粗/加大字号/底色/列分隔线 */
 .sub-row.sub-row-head {
@@ -246,7 +255,7 @@ body {
   border: 1px solid #e2e8f0;
 }
 .sub-row.sub-row-head.sub-row-item { display: grid; grid-template-columns: 2fr 0.9fr 1.2fr 72px; }
-.sub-row.sub-row-head.sub-row-svc  { display: grid; grid-template-columns: 2fr 1.2fr 72px; }
+.sub-row.sub-row-head.sub-row-svc  { display: grid; grid-template-columns: 1.8fr 1fr 1.2fr 72px; }
 .sub-row.sub-row-head .ci-label {
   font-size: 14px; font-weight: 700; color: #1e293b;
   line-height: 1.4; letter-spacing: .3px;
