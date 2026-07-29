@@ -387,7 +387,7 @@
         <!-- 支出类 -->
         <div class="prod-tab-wrap" id="prodPurchaseWrap" style="display:none;">
           <div class="metric-grid row2">
-            <div class="metric-card highlight"><div class="m-name">采购总数量</div><div class="m-value" id="ppQty">0</div></div>
+            <div class="metric-card"><div class="m-name">采购总数量</div><div class="m-value" id="ppQty">0</div></div>
             <div class="metric-card"><div class="m-name">采购总成本</div><div class="m-value" id="ppCost">¥ 0</div></div>
           </div>
           <div class="ana-card">
@@ -403,12 +403,18 @@
             <div class="table-wrap"><table class="data-table" id="ppPriceTop"></table></div>
           </div>
         </div>
+
+        <!-- 商品明细：跨 tab 固定显示（销售+采购合并） -->
+        <div class="ana-card" id="prodDetailCard" style="margin-top:18px;">
+          <div class="ana-card-title">商品明细 <span class="text-muted" style="font-size:12px;font-weight:normal;margin-left:6px;">销售总额 / 采购总成本 / 销售数量 / 采购数量 / 毛利率</span></div>
+          <div class="table-wrap"><table class="data-table" id="productDetailTable"></table></div>
+        </div>
       </section>
 
       <!-- 6.3 合同分析 -->
       <section class="page-section" id="page-analysis-contract">
         <div class="page-toolbar">
-          <div><div class="page-title">合同分析</div><div class="page-subtitle">合同金额、已回款、执行率；P1 升级为按合同号严格聚合</div></div>
+          <div><div class="page-title">合同分析</div><div class="page-subtitle">合同金额、已回款、执行率；按合同名归集（日期-客户-首项明细等）</div></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <select class="form-select ana-unit" style="width:auto;"><option>全部单元</option></select>
             <select class="form-select ana-period" style="width:auto;"></select>
