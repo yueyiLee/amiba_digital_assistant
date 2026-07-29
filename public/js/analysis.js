@@ -367,35 +367,40 @@ const Analysis = (() => {
       $('piQty').textContent = (sales.total_qty || 0).toLocaleString();
       $('piSale').textContent = money(sales.total_sale || 0);
       $('piGm').textContent = ((sales.avg_gm || 0) * 100).toFixed(1) + '%';
-      renderProdTopTable('piQtyTop', sales.by_qty, '销售数量需通过「合同录入 → 商品明细」维护');
-      renderProdTopTable('piAmtTop', sales.by_amount, null);
+      renderProdTopTable('piQtyTop', sales.by_qty, '销售数量需通过「合同录入 → 商品明细」维护', true);
+      renderProdTopTable('piAmtTop', sales.by_amount, null, true);
       renderPriceTable('piPriceTop', sales.price_change, '需同一商品在多笔合同中有成交价');
       // 支出类 KPI
       $('ppQty').textContent = (purchase.total_qty || 0).toLocaleString();
       $('ppCost').textContent = money(purchase.total_cost || 0);
-      renderProdTopTable('ppQtyTop', purchase.by_qty, '采购数量需通过「合同录入 → 商品明细」维护');
-      renderProdTopTable('ppCostTop', purchase.by_amount, null);
+      renderProdTopTable('ppQtyTop', purchase.by_qty, '采购数量需通过「合同录入 → 商品明细」维护', false);
+      renderProdTopTable('ppCostTop', purchase.by_amount, null, false);
       renderPriceTable('ppPriceTop', purchase.price_change, '需同一商品在多笔合同中有成交价');
     } catch (e) {
       App.toast('商品分析加载失败：' + e.message, 'error');
     }
   }
-  // 数量/金额 TOP5 表格
-  function renderProdTopTable(tableId, rows, emptyHint) {
+  // 数量/金额 TOP5 表格（销售 tab 显示毛利率，采购 tab 不显示毛利率列）
+  function renderProdTopTable(tableId, rows, emptyHint, showGm) {
     const el = $(tableId);
     if (!el) return;
     if (!rows || rows.length === 0) {
       const hint = emptyHint || '暂无数据';
-      el.innerHTML = `<tbody><tr><td class="empty-state" colspan="4">${escapeHtml(hint)}</td></tr></tbody>`;
+      const colspan = showGm ? 4 : 3;
+      el.innerHTML = `<tbody><tr><td class="empty-state" colspan="${colspan}">${escapeHtml(hint)}</td></tr></tbody>`;
       return;
     }
-    el.innerHTML = `<thead><tr><th>商品</th><th>数量</th><th>金额</th><th>毛利率</th></tr></thead>
-      <tbody>${rows.map(r => `<tr>
-        <td>${escapeHtml(r.product_name || '未命名商品')}</td>
-        <td>${r.total_qty || 0}</td>
-        <td class="amt">${money(r.total_amount || 0)}</td>
-        <td>${( (r.gm || 0) * 100 ).toFixed(1)}%</td>
-      </tr>`).join('')}</tbody>`;
+    const gmTh = showGm ? '<th>毛利率</th>' : '';
+    el.innerHTML = `<thead><tr><th>商品</th><th>数量</th><th>金额</th>${gmTh}</tr></thead>
+      <tbody>${rows.map(r => {
+        const gmTd = showGm ? `<td>${( (r.gm || 0) * 100 ).toFixed(1)}%</td>` : '';
+        return `<tr>
+          <td>${escapeHtml(r.product_name || '未命名商品')}</td>
+          <td>${r.total_qty || 0}</td>
+          <td class="amt">${money(r.total_amount || 0)}</td>
+          ${gmTd}
+        </tr>`;
+      }).join('')}</tbody>`;
   }
   // 实际价变动 TOP5 表格
   function renderPriceTable(tableId, rows, emptyHint) {

@@ -894,11 +894,26 @@ async function productAnalysis(ownerId, direction, sd, ed) {
   const totalQty = qtyRows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
   const avgGm = isSale && totalAmount > 0 ? Math.max(0, (totalAmount - totalCost) / totalAmount) : 0;
 
+  // 4b) 按商品的采购成本（仅销售 tab 需要，用于计算每行毛利率）
+  //     同一商品在同期材料采购中的 abs(amount) 累加
+  let costByPid = {};
+  if (isSale) {
+    const costByPidRows = await db.queryAll(`SELECT product_id, SUM(ABS(amount)) AS cost
+        FROM transactions
+        WHERE owner_id=$1 AND type='材料采购' AND amount<0 AND product_id IS NOT NULL AND date BETWEEN $2 AND $3
+        GROUP BY product_id`, [ownerId, sd, ed]);
+    costByPidRows.forEach(r => { costByPid[r.product_id] = Number(r.cost) || 0; });
+  }
+
   // 5) 输出
   const byQty = qtyRows.slice().sort((a, b) => Number(b.qty) - Number(a.qty)).slice(0, 5)
     .map(r => ({ product_id: r.product_id, product_name: r.product_name, total_qty: Number(r.qty) || 0, total_amount: Number(r.amt) || 0 }));
-  const byAmount = byAmtRows.slice(0, 5)
-    .map(r => ({ product_id: r.product_id, product_name: r.product_name, total_amount: Number(r.amt) || 0 }));
+  const byAmount = byAmtRows.slice(0, 5).map(r => {
+    const sale = Number(r.amt) || 0;
+    const cost = isSale ? (costByPid[r.product_id] || 0) : 0;
+    const gm = isSale && sale > 0 ? Math.max(0, (sale - cost) / sale) : 0;
+    return { product_id: r.product_id, product_name: r.product_name, total_amount: sale, cost, gm };
+  });
   return {
     total_sale: totalAmount,
     total_cost: isSale ? totalCost : totalAmount,
