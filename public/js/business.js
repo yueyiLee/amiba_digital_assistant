@@ -157,13 +157,21 @@ const Business = (() => {
   // (保留) sel2 用于客户/商品等编辑下拉默认选中
 
   // ============ 合同录入：明细行辅助函数 ============
-  // 数字保留 2 位小数的展示（用于金额、数量失焦时统一规范）
+  // 数字保留 2 位小数的展示（用于金额失焦时统一规范）
   function formatMoney2(input) {
     const v = input.value;
     if (v === '' || v == null) return;
     const n = parseFloat(v);
     if (isNaN(n)) { input.value = ''; return; }
     input.value = n.toFixed(2);
+  }
+  // 整数展示（用于商品明细的数量）：失焦时向下取整、写回整数；不接受小数
+  function formatInt(input) {
+    const v = input.value;
+    if (v === '' || v == null) return;
+    const n = parseFloat(v);
+    if (isNaN(n) || n < 0) { input.value = ''; return; }
+    input.value = String(Math.floor(n));
   }
   // 服务下拉切换：自动把服务的参考费用填到本行 readOnly 输入
   function onServiceChange(sel) {
@@ -194,14 +202,15 @@ const Business = (() => {
     const productName = sel ? sel.name : (it && it.product_name ? it.product_name : '');
     const qtyNum = it ? (Number(it.quantity) || 0) : 0;
     const priceNum = it ? (Number(it.actual_price) || 0) : 0;
-    const qtyStr = qtyNum ? qtyNum.toFixed(2) : '';
+    // 数量必须是整数（保留整数部分，0 显示空），金额保留 2 位小数
+    const qtyStr = qtyNum ? String(Math.round(qtyNum)) : '';
     const priceStr = priceNum ? priceNum.toFixed(2) : '';
     const datalistId = 'productList_' + Math.random().toString(36).slice(2, 8);
     return `<div class="sub-row sub-row-item" data-idx="${i}">
       <input type="text" class="form-input ci-product" list="${datalistId}" placeholder="输入商品名称（支持模糊搜索）" value="${escapeHtml(productName)}" autocomplete="off">
       <datalist id="${datalistId}">${products.map(p => `<option value="${escapeHtml(p.name)}" data-pid="${p.id}">`).join('')}</datalist>
       <input type="hidden" class="ci-product-id" value="${pid}">
-      <input type="number" class="form-input ci-qty" min="0" step="0.01" value="${qtyStr}" placeholder="数量" onblur="Business.formatMoney2(this)">
+      <input type="number" class="form-input ci-qty" min="0" step="1" value="${qtyStr}" placeholder="数量（整数）" onblur="Business.formatInt(this)">
       <input type="number" class="form-input ci-price" min="0" step="0.01" value="${priceStr}" placeholder="实际交易金额" onblur="Business.formatMoney2(this)">
       <button type="button" class="ci-del-btn" title="删除该明细" onclick="Business.removeSubRow(this)">删除</button>
     </div>`;
@@ -257,7 +266,9 @@ const Business = (() => {
     const out = [];
     document.querySelectorAll('#contractItems .sub-row-item').forEach(r => {
       const name = (r.querySelector('.ci-product').value || '').trim();
-      const qty = n2(r.querySelector('.ci-qty').value);
+      // 数量必须是整数（向下取整保护后端：拒绝 2.13 这种小数）
+      const qtyRaw = parseFloat(r.querySelector('.ci-qty').value);
+      const qty = Number.isFinite(qtyRaw) ? Math.floor(qtyRaw) : 0;
       const price = n2(r.querySelector('.ci-price').value);
       const explicitPid = Number(r.querySelector('.ci-product-id').value) || 0;
       let pid = explicitPid;
@@ -1065,5 +1076,6 @@ const Business = (() => {
            renderCustomerAdd, renderCustomerQuery, saveCustomerDirect,
            renderProductAdd, renderProductQuery, onCat1ChangeAdd, saveProductDirect,
            renderContractAdd, renderContractQuery, saveContract, clearContractForm, editContractOnAddPage,
+           onServiceChange, formatMoney2, formatInt, removeSubRow,
            renderInventoryQuery, exportCustomerQuery, exportProductQuery };
 })();
