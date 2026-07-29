@@ -8,6 +8,7 @@ const App = (() => {
   // 二级页面 key → 渲染动作（复用各模块细粒度渲染函数）
   const ROUTES = {
     'dashboard':         () => { Dashboard.renderUnitFilter(); Dashboard.render(); },
+    'manual':            () => { Manual.render(); },
     'analysis-overview': () => Analysis.renderOverview(),
     'analysis-customer': () => Analysis.renderCustomer(),
     'analysis-product':  () => Analysis.renderProduct(),
