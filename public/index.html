@@ -775,29 +775,29 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card ci-card">
           <div class="card-title">商品明细</div>
-          <div class="setting-desc">销售合同填卖出商品 / 采购合同填买入商品。商品名支持模糊搜索。</div>
           <div class="sub-row sub-row-head sub-row-item">
             <div class="ci-label">商品</div>
             <div class="ci-label">数量</div>
             <div class="ci-label">实际交易金额</div>
-            <div></div>
+            <div class="ci-label ci-label-action">操作</div>
           </div>
-          <div id="contractItems"><div class="text-muted" style="font-size:12px;">暂无明细，点击下方按钮添加</div></div>
-          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="Business.addContractItemRow()">+ 添加商品明细</button>
+          <div class="sub-hint">销售合同填卖出商品 / 采购合同填买入商品，商品名支持模糊搜索。</div>
+          <div id="contractItems"><div class="text-muted ci-empty">暂无明细，点击下方按钮添加</div></div>
+          <button type="button" class="btn btn-primary ci-add-btn" onclick="Business.addContractItemRow()"><span class="ci-add-ic">+</span>添加商品明细</button>
         </div>
 
-        <div class="card">
+        <div class="card ci-card">
           <div class="card-title">服务费明细</div>
-          <div class="setting-desc">从「服务管理」中选择服务，填写该合同实际发生的服务费用。</div>
           <div class="sub-row sub-row-head sub-row-svc">
             <div class="ci-label">服务（从服务管理选）</div>
             <div class="ci-label">实际服务费用（¥）</div>
-            <div></div>
+            <div class="ci-label ci-label-action">操作</div>
           </div>
-          <div id="contractSvcs"><div class="text-muted" style="font-size:12px;">暂无服务费，点击下方按钮添加</div></div>
-          <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="Business.addContractSvcRow()">+ 添加服务费</button>
+          <div class="sub-hint">从「服务管理」中选择服务，填写该合同实际发生的服务费用。</div>
+          <div id="contractSvcs"><div class="text-muted ci-empty">暂无服务费，点击下方按钮添加</div></div>
+          <button type="button" class="btn btn-primary ci-add-btn" onclick="Business.addContractSvcRow()"><span class="ci-add-ic">+</span>添加服务费</button>
         </div>
 
         <div class="form-actions">

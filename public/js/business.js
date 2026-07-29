@@ -50,9 +50,9 @@ const Business = (() => {
     const st = document.getElementById('m-status'); if (st) st.value = '进行中';
     const nt = document.getElementById('m-note'); if (nt) nt.value = '';
     const itemsBox = document.getElementById('contractItems');
-    if (itemsBox) itemsBox.innerHTML = '<div class="text-muted" style="font-size:12px;">暂无明细，点击下方按钮添加</div>';
+    if (itemsBox) itemsBox.innerHTML = '<div class="text-muted ci-empty">暂无明细，点击下方按钮添加</div>';
     const svcsBox = document.getElementById('contractSvcs');
-    if (svcsBox) svcsBox.innerHTML = '<div class="text-muted" style="font-size:12px;">暂无服务费，点击下方按钮添加</div>';
+    if (svcsBox) svcsBox.innerHTML = '<div class="text-muted ci-empty">暂无服务费，点击下方按钮添加</div>';
   }
   // 供查询页「编辑」按钮调用：跳到录入页 + 把表单填好
   function editContractOnAddPage(id) {
@@ -78,13 +78,13 @@ const Business = (() => {
     if (itemsBox) {
       itemsBox.innerHTML = items.length
         ? items.map((it, i) => contractItemRowHtml(products, it, i)).join('')
-        : '<div class="text-muted" style="font-size:12px;">暂无明细，点击下方按钮添加</div>';
+        : '<div class="text-muted ci-empty">暂无明细，点击下方按钮添加</div>';
     }
     const svcsBox = document.getElementById('contractSvcs');
     if (svcsBox) {
       svcsBox.innerHTML = svcs.length
         ? svcs.map((sv, i) => contractSvcRowHtml(services, sv, i)).join('')
-        : '<div class="text-muted" style="font-size:12px;">暂无服务费，点击下方按钮添加</div>';
+        : '<div class="text-muted ci-empty">暂无服务费，点击下方按钮添加</div>';
     }
   }
   async function saveContract() {
@@ -118,7 +118,9 @@ const Business = (() => {
   }
 
   // ========== 合同：查询页（独立页面） ==========
-  function renderContractQuery() {
+  async function renderContractQuery() {
+    // 主动刷新缓存，确保看到最新合同
+    try { await Storage.refreshCache(); } catch (e) { console.warn('刷新合同缓存失败', e); }
     renderContracts();
   }
   function renderContracts() {
@@ -143,7 +145,7 @@ const Business = (() => {
           <td class="amt ${amtCls}">${Calculator.fmtMoney(c.amount)}</td>
           <td><span class="badge ${dirCls}">${dirLabel}</span></td>
           <td>${c.date || c.start_date || '—'}</td>
-          <td>${Auth.canEdit() ? `<button class="btn btn-secondary btn-sm" onclick="Business.editContractOnAddPage(${c.id})">编辑</button> <button class="btn btn-danger btn-sm" onclick="Business.delContract(${c.id})">删</button>` : '—'}</td>
+          <td>${Auth.canEdit() ? `<button class="btn btn-secondary btn-sm" onclick="Business.editContractOnAddPage(${c.id})">编辑</button> <button class="btn btn-danger btn-sm" onclick="Business.delContract(${c.id})">删除</button>` : '—'}</td>
         </tr>`;
       }).join('')}</tbody>`;
   }
@@ -165,7 +167,7 @@ const Business = (() => {
       <input type="hidden" class="ci-product-id" value="${pid}">
       <input type="number" class="form-input ci-qty" min="0" step="0.01" value="${qty || ''}" placeholder="数量">
       <input type="number" class="form-input ci-price" min="0" step="0.01" value="${price || ''}" placeholder="实际交易金额">
-      <button type="button" class="btn btn-danger btn-sm ci-del" onclick="this.closest('.sub-row').remove()">×</button>
+      <button type="button" class="ci-del-btn" title="删除该明细" onclick="this.closest('.sub-row').remove()">删除</button>
     </div>`;
   }
 
@@ -182,7 +184,7 @@ const Business = (() => {
         <option value="">${noSvc ? '（请先在「服务管理」添加服务）' : '— 请选择服务 —'}</option>${opts}
       </select>
       <input type="number" class="form-input cs-amt" min="0" step="0.01" value="${amt || ''}" placeholder="实际服务费用（¥）">
-      <button type="button" class="btn btn-danger btn-sm" onclick="this.closest('.sub-row').remove()">×</button>
+      <button type="button" class="ci-del-btn" title="删除该服务费" onclick="this.closest('.sub-row').remove()">删除</button>
     </div>`;
   }
 
