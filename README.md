@@ -13,7 +13,7 @@
 
 ## 技术栈
 
-- 后端：Node.js + Express + PostgreSQL
+- 后端：Node.js + Express + better-sqlite3（同步 SQLite）
 - 认证：JWT + bcryptjs 密码加密
 - 前端：原生 JavaScript + Chart.js 图表
 - 汇率：Frankfurter API（欧洲央行数据源）
@@ -86,7 +86,7 @@ npx localtunnel --port 3000
 
 ## 数据说明
 
-- 数据库为 PostgreSQL，首次启动自动创建表并填充演示数据
+- 数据库为 SQLite，文件位于 `database.sqlite`，首次启动自动创建并填充演示数据
 - 所有金额以人民币存储，切换币种时在显示层按实时汇率折算
 - 支持导出 CSV/JSON 格式数据
 

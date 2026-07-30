@@ -993,8 +993,8 @@ input:checked + .slider:before { transform: translateX(20px); }
 .ai-chat-hint { font-size: 11px; color: #bbb; text-align: center; margin-top: 6px; }
 
 /* ========== 使用说明书（一级入口）========== */
-.nav-doc { background: rgba(245, 158, 11, 0.14); margin-top: 2px; }
-.nav-doc:hover { background: rgba(245, 158, 11, 0.24); }
+.nav-doc { margin-top: 2px; }
+.nav-doc:hover { background: #1e293b; color: #fff; }
 
 .manual-wrap { display: flex; align-items: flex-start; gap: 22px; }
 .manual-toc {
