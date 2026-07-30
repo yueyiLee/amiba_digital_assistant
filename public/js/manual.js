@@ -9,7 +9,7 @@ const Manual = (() => {
     const alt = caption || '界面示意';
     return `
       <figure class="manual-shot">
-        <img src="images/manual/${key}.png" alt="${alt}"
+        <img src="images/manual/${key}.png?v=20260730a" alt="${alt}"
              loading="lazy"
              onerror="this.style.display='none';this.parentNode.classList.add('shot-missing');this.parentNode.insertAdjacentHTML('beforeend','<div class=&quot;shot-ph&quot;>📷 ${alt}<br><small>截图加载中或暂未采集</small></div>')">
         <figcaption>${caption || ''}</figcaption>
