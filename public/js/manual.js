@@ -42,7 +42,7 @@ const Manual = (() => {
     el.innerHTML = `
       <div class="manual-wrap">
         <aside class="manual-toc">
-          <div class="manual-toc-title">使用说明书</div>
+          <div class="manual-toc-title">目录</div>
           <div class="manual-toc-sub">按场景速查 · 9 章</div>
           <ul>${tocHtml}</ul>
           <div class="manual-toc-foot">遇到问题？右下角 🤖 AI 助手随时可问</div>
