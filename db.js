@@ -65,7 +65,7 @@ const DEFAULT_EXPENSE_TYPES = [
   ['材料采购', 'expense', true,  true,  ''],
   ['委托加工', 'expense', true,  false, 'processing'],
   ['杂费支出', 'expense', false, false, 'misc'],
-  ['税金',     'expense', true,  true,  ''],
+  ['税金',     'expense', false, false, ''],  // 税金不需要关联商品和客户（批14）
   ['现金支出', 'expense', true,  true,  ''],
   ['销售收入', 'income',  true,  true,  ''],
   ['现金收入', 'income',  true,  true,  ''],
@@ -571,6 +571,20 @@ async function ensureExpenseTypesForAll() {
   }
 }
 
+// 批14 迁移：把所有账号的「税金」联动规则改为不关联客户/商品（前端录入页隐藏这 2 个字段）。
+// 幂等：DB 默认已为 false；这里只把老 seed 的 true 行改回 false。
+async function migrateTaxExpenseTypeLinkage() {
+  try {
+    const r = await query(
+      "UPDATE expense_types SET link_customer=FALSE, link_product=FALSE WHERE name='税金' AND direction='expense' AND (link_customer=TRUE OR link_product=TRUE) RETURNING id"
+    );
+    const n = r.rows ? r.rows.length : 0;
+    if (n > 0) console.log(`[DB] 税金联动规则迁移：修正 ${n} 条`);
+  } catch (e) {
+    console.error('[DB] migrateTaxExpenseTypeLinkage 失败:', e.message);
+  }
+}
+
 // 老库迁移：users 表补 company_name 列（账号绑定唯一企业），并为已有 admin 补默认企业名
 async function ensureUserCompanyNameColumn() {
   try {
@@ -838,6 +852,9 @@ async function init() {
 
   // 3.7) 确保每个账号都拥有收支类型预设（费用类型，可配置联动/启停）
   await ensureExpenseTypesForAll();
+
+  // 3.7.1) 批14 迁移：税金类型不关联客户/商品（老账号修正）
+  await migrateTaxExpenseTypeLinkage();
 
   // 3.8) 老库 users 表补 company_name 列（账号绑定唯一企业）
   await ensureUserCompanyNameColumn();
