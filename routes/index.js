@@ -228,20 +228,26 @@ router.delete('/transactions/:id', async (req, res) => {
 
 /* ========== 2. products 商品 ========== */
 router.get('/products', async (req, res) => {
-  try { ok(res, await db.queryAll('SELECT * FROM products WHERE owner_id=$1 ORDER BY id DESC', [req.user.id])); }
+  try {
+    const sql = `SELECT p.*, COALESCE(i.quantity, 0) AS stock
+      FROM products p
+      LEFT JOIN inventory i ON i.product_id = p.id AND i.owner_id = p.owner_id
+      WHERE p.owner_id=$1 ORDER BY p.id DESC`;
+    ok(res, await db.queryAll(sql, [req.user.id]));
+  }
   catch (e) { fail400(res, e.message); }
 });
 
 router.post('/products', async (req, res) => {
   try {
-    const { name, brand, unit, category1, category2, purchase_price, sale_price } = req.body || {};
+    const { name, brand, unit, category1, category2, purchase_price, sale_price, notes, warning_threshold, initial_stock } = req.body || {};
     if (!name || !category1) return fail400(res, '缺少必要字段（名称/一级分类）');
     const result = await db.insertReturning(
-      'INSERT INTO products(name,brand,unit,category1,category2,purchase_price,sale_price,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
-      [name, brand || '', unit || '件', category1, category2 || '', purchase_price || 0, sale_price || 0, req.user.id]
+      'INSERT INTO products(name,brand,unit,category1,category2,purchase_price,sale_price,notes,warning_threshold,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
+      [name, brand || '', unit || '件', category1, category2 || '', purchase_price || 0, sale_price || 0, notes || '', warning_threshold || 0, req.user.id]
     );
     const newId = result.rows[0].id;
-    await db.query('INSERT INTO inventory(product_id,quantity,avg_price,owner_id) VALUES($1,$2,$3,$4)', [newId, 0, purchase_price || 0, req.user.id]);
+    await db.query('INSERT INTO inventory(product_id,quantity,avg_price,owner_id) VALUES($1,$2,$3,$4)', [newId, initial_stock || 0, purchase_price || 0, req.user.id]);
     ok(res, { id: newId });
   } catch (e) { fail400(res, e.message); }
 });
@@ -252,9 +258,10 @@ router.put('/products/:id', async (req, res) => {
     const old = await db.queryOne('SELECT * FROM products WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
     if (!old) return fail404(res, '商品不存在');
     await db.query(
-      'UPDATE products SET name=$1,brand=$2,unit=$3,category1=$4,category2=$5,purchase_price=$6,sale_price=$7 WHERE id=$8 AND owner_id=$9',
+      'UPDATE products SET name=$1,brand=$2,unit=$3,category1=$4,category2=$5,purchase_price=$6,sale_price=$7,notes=$8,warning_threshold=$9 WHERE id=$10 AND owner_id=$11',
       [p.name ?? old.name, p.brand ?? old.brand, p.unit ?? old.unit, p.category1 ?? old.category1,
-       p.category2 ?? old.category2, p.purchase_price ?? old.purchase_price, p.sale_price ?? old.sale_price, req.params.id, req.user.id]
+       p.category2 ?? old.category2, p.purchase_price ?? old.purchase_price, p.sale_price ?? old.sale_price,
+       p.notes ?? old.notes, p.warning_threshold ?? old.warning_threshold, req.params.id, req.user.id]
     );
     ok(res, { success: true });
   } catch (e) { fail400(res, e.message); }
@@ -275,14 +282,39 @@ router.get('/customers', async (req, res) => {
   catch (e) { fail400(res, e.message); }
 });
 
+// 客户汇总：通过 contracts / transactions 关联表实时计算应收与最近交易日期
+router.get('/customers/summary', async (req, res) => {
+  try {
+    const sql = `SELECT c.id,
+      COALESCE((
+        SELECT SUM(ct.amount - COALESCE((
+          SELECT SUM(t.amount)
+          FROM transactions t
+          WHERE t.contract_id = ct.id AND t.amount > 0 AND t.owner_id = $1
+        ), 0))
+        FROM contracts ct
+        WHERE ct.customer_id = c.id AND ct.direction = 'sale' AND ct.owner_id = $1
+      ), 0) AS receivable,
+      COALESCE((
+        SELECT MAX(t2.date)
+        FROM transactions t2
+        WHERE t2.customer_id = c.id AND t2.owner_id = $1
+      ), '') AS last_transaction_date
+    FROM customers c
+    WHERE c.owner_id = $1`;
+    ok(res, await db.queryAll(sql, [req.user.id]));
+  }
+  catch (e) { fail400(res, e.message); }
+});
+
 router.post('/customers', async (req, res) => {
   try {
-    const { name, type, contact, address } = req.body || {};
+    const { name, type, contact, address, notes } = req.body || {};
     if (!name) return fail400(res, '客户名称必填');
     if (!type) return fail400(res, '客户类型必选');
     const result = await db.insertReturning(
-      'INSERT INTO customers(name,type,contact,address,owner_id) VALUES($1,$2,$3,$4,$5) RETURNING id',
-      [name, type, contact || '', address || '', req.user.id]
+      'INSERT INTO customers(name,type,contact,address,notes,owner_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING id',
+      [name, type, contact || '', address || '', notes || '', req.user.id]
     );
     ok(res, { id: result.rows[0].id });
   } catch (e) { fail400(res, e.message); }
@@ -293,8 +325,8 @@ router.put('/customers/:id', async (req, res) => {
     const c = req.body || {};
     const old = await db.queryOne('SELECT * FROM customers WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
     if (!old) return fail404(res, '客户不存在');
-    await db.query('UPDATE customers SET name=$1,type=$2,contact=$3,address=$4 WHERE id=$5 AND owner_id=$6',
-      [c.name ?? old.name, c.type ?? old.type, c.contact ?? old.contact, c.address ?? old.address, req.params.id, req.user.id]);
+    await db.query('UPDATE customers SET name=$1,type=$2,contact=$3,address=$4,notes=$5 WHERE id=$6 AND owner_id=$7',
+      [c.name ?? old.name, c.type ?? old.type, c.contact ?? old.contact, c.address ?? old.address, c.notes ?? old.notes, req.params.id, req.user.id]);
     ok(res, { success: true });
   } catch (e) { fail400(res, e.message); }
 });
