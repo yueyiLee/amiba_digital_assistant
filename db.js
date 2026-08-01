@@ -184,14 +184,10 @@ function bind(text, params) {
 }
 
 async function query(text, params) {
-<<<<<<< HEAD
   // 优先使用原生 pg 连接（显式配置了 DATABASE_URL / PG_* 时）。
   // 注：Cloud Run 注入了 TENCENTCLOUD_* 临时密钥，但 manager-node 的 executePGSql
   // 在云托管网络下会挂起，因此只要配置了原生 PG 连接就走原生驱动。
   if (!hasNativePgConfig && (cloudApp || hasCloudCreds)) {
-=======
-  if (!DIRECT_PG && (cloudApp || hasCloudCreds)) {
->>>>>>> 06808cad500a2bba2f114734087e2fb2a28c4f38
     const res = await cloudQuery(bind(text, params));
     return adapt(res);
   }
