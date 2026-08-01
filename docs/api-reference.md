@@ -33,8 +33,13 @@
 - [17. 合同候选推荐](#17-合同候选推荐-contracts-suggest)
 - [18. 商品分析](#18-商品分析-analysis)
 - [19. 驾驶舱聚合](#19-驾驶舱聚合-analysis-cockpit)
-- [20. 汇率查询](#20-汇率查询-exchange)
-- [21. AI 对话](#21-ai-对话-ai)
+- [20. 客户分析聚合](#20-客户分析聚合-analysis-customer)
+- [21. 商品分析聚合](#21-商品分析聚合-analysis-product)
+- [22. 合同分析聚合](#22-合同分析聚合-analysis-contract)
+- [23. 费用分析聚合](#23-费用分析聚合-analysis-expense)
+- [24. 阿米巴核算聚合](#24-阿米巴核算聚合-analysis-amoeba)
+- [25. 汇率查询](#25-汇率查询-exchange)
+- [26. AI 对话](#26-ai-对话-ai)
 
 ---
 
@@ -1815,7 +1820,302 @@
 
 ---
 
-## 20. 汇率查询 (exchange)
+## 20. 客户分析聚合 (analysis-customer)
+
+### GET /api/analysis/customer
+
+小程序「分析 → 客户分析」聚合接口（PRD 5.4.2）。口径对齐 PC 端 `public/js/analysis.js` 客户维度逻辑。
+
+**请求参数** (Query String)：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `startDate` | string | 否 | 起始日期（YYYY-MM-DD），默认无下限 |
+| `endDate` | string | 否 | 结束日期（YYYY-MM-DD），默认无上限 |
+
+**成功响应** (200)：
+
+```json
+{
+  "kpi": {
+    "customer_count": 20,
+    "active_count": 8,
+    "total_receivable": 85000
+  },
+  "top5": [
+    {
+      "customer_id": 3,
+      "customer_name": "张三面料厂",
+      "sale": 128000,
+      "cash": 43000,
+      "receivable": 85000,
+      "gm": 0.38,
+      "last_date": "2026-07-15",
+      "age_days": 17
+    }
+  ],
+  "aging": {
+    "buckets": { "within30": 50000, "within60": 20000, "over60": 15000 },
+    "total": 85000
+  },
+  "tiers": {
+    "list": [ { "name": "张三面料厂", "sale": 128000, "tier": "A" } ],
+    "summary": { "A": 4, "B": 8, "C": 8 },
+    "amounts": { "A": 380000, "B": 220000, "C": 90000 }
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 说明 |
+|---|---|
+| `kpi.customer_count` | 累计客户数（`customers` 表总数） |
+| `kpi.active_count` | 近 90 天有交易的活跃客户数 |
+| `kpi.total_receivable` | 应收总额 = 销售收入 − 现金收入 |
+| `top5` | Top 5 客户贡献，按销售额降序；每行含销售额、回款额（`cash`）、应收（`sale − cash`）、毛利率（`gm`，0-1 小数）、最近交易日期、账龄（`age_days`，天） |
+| `aging.buckets` | 账龄分布：`within30`（≤30 天）/ `within60`（31-60 天）/ `over60`（>60 天），按客户应收金额汇总 |
+| `aging.total` | 账龄分布合计 |
+| `tiers.list` | 客户分层列表，`tier` 为 `A` / `B` / `C` |
+| `tiers.summary` | 各层级客户数量 |
+| `tiers.amounts` | 各层级客户销售贡献金额 |
+
+> 客户分层按帕累托原则：A 类累计销售贡献前 20%，B 类 20%-50%，C 类其余。
+>
+> 账龄按「最近一次交易日期」距今的自然日数计算（本地时区）。
+
+---
+
+## 21. 商品分析聚合 (analysis-product)
+
+### GET /api/analysis/product
+
+小程序「分析 → 商品分析」聚合接口（PRD 5.4.3）。复用 PC 端 `productAnalysis()` 销售分析结果，叠加库存与预警。
+
+**请求参数** (Query String)：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `startDate` | string | 否 | 起始日期（YYYY-MM-DD），默认无下限 |
+| `endDate` | string | 否 | 结束日期（YYYY-MM-DD），默认无上限 |
+
+**成功响应** (200)：
+
+```json
+{
+  "kpi": {
+    "sku_count": 30,
+    "inventory_value": 120000,
+    "avg_gm": 0.32
+  },
+  "top_products": [
+    {
+      "product_id": 1,
+      "product_name": "纯棉T恤",
+      "sale": 69000,
+      "gm": 0.64,
+      "stock": 120,
+      "turnover_days": 45
+    }
+  ],
+  "alerts": [
+    { "level": "red", "product_name": "C型耗材", "product_id": 8, "reason": "毛利率 10.0% 跌破 15%", "type": "low_margin" }
+  ],
+  "alert_count": { "red": 2, "yellow": 1 }
+}
+```
+
+**字段说明**：
+
+| 字段 | 说明 |
+|---|---|
+| `kpi.sku_count` | 在售商品 SKU 数（`products` 表总数） |
+| `kpi.inventory_value` | 库存占用 = Σ(quantity × avg_price) |
+| `kpi.avg_gm` | 平均毛利率（复用销售分析，0-1 小数） |
+| `top_products` | Top 10 商品销售，按销售额降序；每行含销售额、毛利率（`gm`）、当前库存（`stock`）、周转天数（`turnover_days` = 库存 / 日均销售额） |
+| `alerts` | 库存预警列表，红前黄后；`type`：`low_margin`（低毛利）/ `low_stock`（缺货）/ `slow_turnover`（呆滞） |
+| `alert_count` | 红/黄预警条数 |
+
+**预警规则**：
+
+| 类型 | level | 触发条件 | 默认阈值 |
+|---|---|---|---|
+| 低毛利 | `red` | 毛利率 < 15% | `MARGIN_THRESHOLD = 0.15` |
+| 缺货 | `red` | 库存 ≤ 安全库存阈值 | `warning_threshold` 字段 |
+| 呆滞 | `yellow` | 周转天数 > 90 天 | 90 |
+
+---
+
+## 22. 合同分析聚合 (analysis-contract)
+
+### GET /api/analysis/contract
+
+小程序「分析 → 合同分析」聚合接口（PRD 5.4.4）。
+
+**请求参数** (Query String)：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `startDate` | string | 否 | 起始日期（YYYY-MM-DD），默认无下限 |
+| `endDate` | string | 否 | 结束日期（YYYY-MM-DD），默认无上限 |
+
+**成功响应** (200)：
+
+```json
+{
+  "kpi": {
+    "total_amount": 200000,
+    "execution_rate": 0.42,
+    "unpaid_amount": 116000,
+    "status_summary": {
+      "in_progress": { "count": 5, "amount": 120000 },
+      "completed": { "count": 3, "amount": 60000 },
+      "dunning": { "count": 1, "amount": 20000 }
+    }
+  },
+  "contracts": [
+    {
+      "id": 12,
+      "customer_name": "张三面料厂",
+      "date": "2026-07-10",
+      "amount": 50000,
+      "paid": 20000,
+      "unpaid": 30000,
+      "status": "进行中",
+      "age_days": 22
+    }
+  ]
+}
+```
+
+**字段说明**：
+
+| 字段 | 说明 |
+|---|---|
+| `kpi.total_amount` | 本期签约合同总额 |
+| `kpi.execution_rate` | 执行率 = 已回款 / 合同金额（0-1 小数） |
+| `kpi.unpaid_amount` | 未回款金额 = max(0, 合同总额 − 已回款) |
+| `kpi.status_summary` | 按状态汇总：`in_progress`（进行中）/ `completed`（已完结）/ `dunning`（催收中），各含 count 与 amount |
+| `contracts` | 合同执行列表，按 id 降序；每行含客户、金额、已回款（`paid`，限定在所选日期范围）、未回款（`unpaid`）、状态、账龄（`age_days`，天） |
+
+> 回款统计与 KPI 保持一致，均限定在所选日期范围内；账龄按最近一次回款日期（无回款则为合同签订日）距今计算。
+
+---
+
+## 23. 费用分析聚合 (analysis-expense)
+
+### GET /api/analysis/expense
+
+小程序「分析 → 费用分析」聚合接口（PRD 5.4.5）。视觉统一使用绿色语义（支出/反向）。
+
+**请求参数** (Query String)：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `startDate` | string | 否 | 起始日期（YYYY-MM-DD），默认无下限 |
+| `endDate` | string | 否 | 结束日期（YYYY-MM-DD），默认无上限 |
+
+**成功响应** (200)：
+
+```json
+{
+  "compose": [
+    { "name": "材料采购", "amount": 80000 },
+    { "name": "杂费支出", "amount": 15000 }
+  ],
+  "total_expense": 95000,
+  "trend": [
+    { "month": "2026-02", "amount": 70000 },
+    { "month": "2026-03", "amount": 82000 },
+    { "month": "2026-04", "amount": 76000 },
+    { "month": "2026-05", "amount": 90000 },
+    { "month": "2026-06", "amount": 88000 },
+    { "month": "2026-07", "amount": 95000 }
+  ],
+  "units": [
+    { "unit": "销售单元", "amount": 40000 },
+    { "unit": "生产单元", "amount": 35000 }
+  ],
+  "unit_total": 75000
+}
+```
+
+**字段说明**：
+
+| 字段 | 说明 |
+|---|---|
+| `compose` | 费用构成列表，按支出金额降序；每项含类别名称（`name`）与金额（`amount`） |
+| `total_expense` | 本期总支出 |
+| `trend` | 近 6 个月逐月支出趋势，`month` 格式 `YYYY-MM` |
+| `units` | 各阿米巴单元费用，按金额降序；`unit` 为 `COALESCE(unit, '全公司')` |
+| `unit_total` | 单元费用合计 |
+
+> 费用构成基于 `transactions.amount < 0` 的支出类交易（材料采购、委托加工、杂费支出、税金、现金支出等），按 `ABS(amount)` 汇总。
+>
+> 趋势按月取「当月 1 日至当月最后一日」（本地时区）。
+
+---
+
+## 24. 阿米巴核算聚合 (analysis-amoeba)
+
+### GET /api/analysis/amoeba
+
+小程序「分析 → 阿米巴核算」聚合接口（PRD 5.4.6）。
+
+**请求参数** (Query String)：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `startDate` | string | 否 | 起始日期（YYYY-MM-DD），默认无下限 |
+| `endDate` | string | 否 | 结束日期（YYYY-MM-DD），默认无上限 |
+
+**成功响应** (200)：
+
+```json
+{
+  "kpi": {
+    "added_value": 105000,
+    "total_hours": 1600,
+    "hourly_labor_cost": 15.5,
+    "breakeven": 80200
+  },
+  "hourly_added_value": 65.625,
+  "prev_hourly_added_value": 62.1,
+  "unit_values": [
+    { "unit": "销售单元", "added_value": 60000 },
+    { "unit": "生产单元", "added_value": 30000 }
+  ],
+  "unit_contribs": [
+    {
+      "unit": "销售单元",
+      "sales": 150000,
+      "expense": 60000,
+      "added_value": 60000,
+      "hours": null,
+      "hourly_value": null
+    }
+  ],
+  "unit_hours_available": false
+}
+```
+
+**字段说明**：
+
+| 字段 | 说明 |
+|---|---|
+| `kpi.added_value` | 附加价值总额 = 总收入（销售收入+现金收入+其他收入） − 消耗成本（材料采购+委托加工） − 杂费支出 |
+| `kpi.total_hours` | 总劳动时间 = 在岗员工工时合计 |
+| `kpi.hourly_labor_cost` | 单位时间劳务费 = 总劳务费 / 总工时 |
+| `kpi.breakeven` | 盈亏临界 = 附加值 − 劳务费，盈余为正 |
+| `hourly_added_value` | 本月整体单位时间附加值 = 附加价值 / 总劳动时间（¥/人·小时） |
+| `prev_hourly_added_value` | 上月单位时间附加值，无上月数据时为 `null` |
+| `unit_values` | 各单元附加价值（因工时无单元字段，降级为附加价值总额） |
+| `unit_contribs` | 单元总贡献：销售额、经费（材料+加工+杂费）、附加价值总额；`hours` / `hourly_value` 因 `work_hours` 无单元字段恒为 `null` |
+| `unit_hours_available` | 单元工时是否可用，当前恒为 `false` |
+
+---
+
+## 25. 汇率查询 (exchange)
 
 ### GET /api/exchange/rate
 
@@ -1852,7 +2152,7 @@
 
 ---
 
-## 21. AI 对话 (ai)
+## 26. AI 对话 (ai)
 
 ### POST /api/ai/chat
 

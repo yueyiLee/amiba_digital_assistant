@@ -1001,6 +1001,22 @@ const COCKPIT_ALERT_LIMIT = 10;
 const numOf = (v) => Number(v) || 0;
 
 /**
+ * 计算 YYYY-MM-DD 距今天的天数（按本地时区的自然日计算）。
+ * 避免 new Date('YYYY-MM-DD') 解析为 UTC 00:00 导致的半天/一天偏差。
+ * @param {string} dateStr
+ * @returns {number} 天数，dateStr 非法时返回 0
+ */
+function daysSince(dateStr) {
+  if (!dateStr) return 0;
+  const parts = String(dateStr).split('-').map(Number);
+  if (parts.length < 3 || parts.some(Number.isNaN)) return 0;
+  const localDate = new Date(parts[0], parts[1] - 1, parts[2]); // 本地 0 点
+  const today = new Date();
+  const todayLocal = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return Math.round((todayLocal.getTime() - localDate.getTime()) / 86400000);
+}
+
+/**
  * 构建 transactions 表 WHERE 子句及对应参数数组。
  * 确保 SQL 占位符与参数数组严格一一对应，避免分散耦合。
  * @param {number} ownerId
@@ -1207,6 +1223,710 @@ router.get('/analysis/cockpit', async (req, res) => {
     const { startDate, endDate, unit } = req.query;
     const sd = startDate || '0001-01-01', ed = endDate || '9999-12-31';
     ok(res, await cockpitAnalysis(req.user.id, sd, ed, unit));
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 8e. 客户分析聚合（小程序「分析 → 客户分析」） ==========
+ * 口径对齐 PC 端 public/js/analysis.js 客户维度逻辑。
+ */
+
+/**
+ * 客户分析聚合（PRD 5.4.2）
+ * @param {number} ownerId
+ * @param {string} sd 起始日期 YYYY-MM-DD
+ * @param {string} ed 结束日期 YYYY-MM-DD
+ */
+async function customerAnalysis(ownerId, sd, ed) {
+  // ---- 1) 基础客户统计 ----
+  const totalRow = await db.queryOne(
+    'SELECT COUNT(*) AS total FROM customers WHERE owner_id=$1', [ownerId]
+  );
+  const totalCount = Number(totalRow?.total) || 0;
+
+  // 活跃客户：近 90 天有交易
+  const activeRow = await db.queryOne(
+    `SELECT COUNT(DISTINCT t.customer_id) AS active
+     FROM transactions t
+     WHERE t.owner_id=$1 AND t.customer_id IS NOT NULL AND t.date BETWEEN $2 AND $3`,
+    [ownerId, sd, ed]
+  );
+  const activeCount = Number(activeRow?.active) || 0;
+
+  // ---- 2) 应收总额 ----
+  const recvRow = await db.queryOne(
+    `SELECT COALESCE(SUM(CASE WHEN t.type='销售收入' THEN t.amount ELSE 0 END), 0) AS sale,
+            COALESCE(SUM(CASE WHEN t.type='现金收入' THEN t.amount ELSE 0 END), 0) AS cash
+     FROM transactions t
+     WHERE t.owner_id=$1 AND t.customer_id IS NOT NULL AND t.date BETWEEN $2 AND $3`,
+    [ownerId, sd, ed]
+  );
+  const totalSale = numOf(recvRow?.sale);
+  const totalCash = numOf(recvRow?.cash);
+  const totalReceivable = totalSale - totalCash;
+
+  // ---- 3) Top 5 客户贡献：销售额、回款额、应收、毛利率 ----
+  // 按客户聚合销售收入与现金收入；毛利率用 同期该客户销售收入 − 该客户对应的材料采购成本
+  const custAggRows = await db.queryAll(
+    `SELECT t.customer_id, c.name AS customer_name,
+            COALESCE(SUM(CASE WHEN t.type='销售收入' THEN t.amount ELSE 0 END), 0) AS sale,
+            COALESCE(SUM(CASE WHEN t.type='现金收入' THEN t.amount ELSE 0 END), 0) AS cash,
+            COALESCE(SUM(CASE WHEN t.type='材料采购' THEN ABS(t.amount) ELSE 0 END), 0) AS cost
+     FROM transactions t
+     JOIN customers c ON c.id = t.customer_id
+     WHERE t.owner_id=$1 AND t.customer_id IS NOT NULL AND t.date BETWEEN $2 AND $3
+     GROUP BY t.customer_id, c.name
+     ORDER BY sale DESC`,
+    [ownerId, sd, ed]
+  );
+
+  // 取最近交易日期
+  const lastDateMap = {};
+  if (custAggRows.length > 0) {
+    const cids = custAggRows.map(r => r.customer_id);
+    const lastRows = await db.queryAll(
+      `SELECT customer_id, MAX(date) AS last_date
+       FROM transactions WHERE owner_id=$1 AND customer_id = ANY($2::int[])
+       GROUP BY customer_id`,
+      [ownerId, cids]
+    );
+    lastRows.forEach(r => { lastDateMap[r.customer_id] = r.last_date; });
+  }
+
+  const top5 = custAggRows.slice(0, 5).map(r => {
+    const sale = numOf(r.sale);
+    const cash = numOf(r.cash);
+    const cost = numOf(r.cost);
+    const recv = sale - cash;
+    const gm = sale > 0 ? (sale - cost) / sale : 0;
+    const lastDate = lastDateMap[r.customer_id] || '';
+    // 账龄：从最近交易日期到今天的天数
+    const ageDays = daysSince(lastDate);
+    return {
+      customer_id: r.customer_id,
+      customer_name: r.customer_name,
+      sale,
+      cash,
+      receivable: recv,
+      gm,
+      last_date: lastDate,
+      age_days: ageDays,
+    };
+  });
+
+  // ---- 4) 应收账龄分布（基于 transactions 按客户聚合） ----
+  // 账龄按最近一次交易的距今时间分段
+  const agingBuckets = { within30: 0, within60: 0, over60: 0 };
+  top5.forEach(c => {
+    if (c.receivable <= 0) return;
+    if (c.age_days <= 30) agingBuckets.within30 += c.receivable;
+    else if (c.age_days <= 60) agingBuckets.within60 += c.receivable;
+    else agingBuckets.over60 += c.receivable;
+  });
+  const agingTotal = agingBuckets.within30 + agingBuckets.within60 + agingBuckets.over60;
+
+  // 全量客户应收账龄（不只 Top 5）
+  const allCustAging = await db.queryAll(
+    `SELECT t.customer_id,
+            COALESCE(SUM(CASE WHEN t.type='销售收入' THEN t.amount ELSE 0 END), 0) -
+            COALESCE(SUM(CASE WHEN t.type='现金收入' THEN t.amount ELSE 0 END), 0) AS recv,
+            MAX(t.date) AS last_date
+     FROM transactions t
+     WHERE t.owner_id=$1 AND t.customer_id IS NOT NULL AND t.date BETWEEN $2 AND $3
+     GROUP BY t.customer_id
+     HAVING COALESCE(SUM(CASE WHEN t.type='销售收入' THEN t.amount ELSE 0 END), 0) -
+            COALESCE(SUM(CASE WHEN t.type='现金收入' THEN t.amount ELSE 0 END), 0) > 0`,
+    [ownerId, sd, ed]
+  );
+  const allAging = { within30: 0, within60: 0, over60: 0 };
+  allCustAging.forEach(r => {
+    const recv = numOf(r.recv);
+    const lastDate = r.last_date || '';
+    const ageDays = daysSince(lastDate);
+    if (ageDays <= 30) allAging.within30 += recv;
+    else if (ageDays <= 60) allAging.within60 += recv;
+    else allAging.over60 += recv;
+  });
+  const allAgingTotal = allAging.within30 + allAging.within60 + allAging.over60;
+
+  // ---- 5) 客户分层（帕累托 ABC） ----
+  // A 类：累计销售贡献前 20%；B 类：20%-50%；C 类：后 50%
+  const allCust = custAggRows.map(r => ({ name: r.customer_name, sale: numOf(r.sale) }));
+  const grandSale = allCust.reduce((s, c) => s + c.sale, 0);
+  allCust.sort((a, b) => b.sale - a.sale);
+  let cum = 0;
+  const tiers = [];
+  allCust.forEach(c => {
+    cum += c.sale;
+    const pct = grandSale > 0 ? cum / grandSale : 0;
+    let tier;
+    if (pct <= 0.2) tier = 'A';
+    else if (pct <= 0.5) tier = 'B';
+    else tier = 'C';
+    tiers.push({ name: c.name, sale: c.sale, tier });
+  });
+
+  const tierSummary = { A: 0, B: 0, C: 0 };
+  const tierAmounts = { A: 0, B: 0, C: 0 };
+  tiers.forEach(t => {
+    tierSummary[t.tier]++;
+    tierAmounts[t.tier] += t.sale;
+  });
+
+  return {
+    kpi: {
+      customer_count: totalCount,
+      active_count: activeCount,
+      total_receivable: totalReceivable,
+    },
+    top5,
+    aging: {
+      buckets: allAging,
+      total: allAgingTotal,
+    },
+    tiers: {
+      list: tiers,
+      summary: tierSummary,
+      amounts: tierAmounts,
+    },
+  };
+}
+
+router.get('/analysis/customer', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const sd = startDate || '0001-01-01', ed = endDate || '9999-12-31';
+    ok(res, await customerAnalysis(req.user.id, sd, ed));
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 8f. 商品分析聚合（小程序「分析 → 商品分析」，PRD 5.4.3） ==========
+ * 复用已有的 productAnalysis() 函数，返回精简后的数据结构。
+ */
+
+/**
+ * 商品分析小程序专用聚合
+ * @param {number} ownerId
+ * @param {string} sd 起始日期 YYYY-MM-DD
+ * @param {string} ed 结束日期 YYYY-MM-DD
+ */
+async function productMiniAnalysis(ownerId, sd, ed) {
+  // 复用已有销售分析
+  const salesData = await productAnalysis(ownerId, 'sale', sd, ed);
+
+  // ---- 1) SKU 数 ----
+  const skuRow = await db.queryOne(
+    'SELECT COUNT(*) AS cnt FROM products WHERE owner_id=$1', [ownerId]
+  );
+  const skuCount = Number(skuRow?.cnt) || 0;
+
+  // ---- 2) 库存占用 ----
+  const invRow = await db.queryOne(
+    'SELECT COALESCE(SUM(quantity * avg_price), 0) AS v FROM inventory WHERE owner_id=$1', [ownerId]
+  );
+  const inventoryValue = numOf(invRow?.v);
+
+  // ---- 3) Top 商品销售（Top 10，含库存/周转信息） ----
+  // 先取按商品聚合的销售 + 成本
+  const topRows = await db.queryAll(
+    `SELECT t.product_id, p.name AS product_name,
+            COALESCE(SUM(CASE WHEN t.type='销售收入' THEN t.amount ELSE 0 END), 0) AS sale,
+            COALESCE(SUM(CASE WHEN t.type='材料采购' THEN ABS(t.amount) ELSE 0 END), 0) AS cost
+     FROM transactions t
+     JOIN products p ON p.id = t.product_id
+     WHERE t.owner_id=$1 AND t.product_id IS NOT NULL AND t.date BETWEEN $2 AND $3
+     GROUP BY t.product_id, p.name
+     ORDER BY sale DESC LIMIT 10`,
+    [ownerId, sd, ed]
+  );
+
+  // 取每个商品的库存
+  const pids = topRows.map(r => r.product_id);
+  const stockMap = {};
+  if (pids.length > 0) {
+    const stockRows = await db.queryAll(
+      `SELECT product_id, COALESCE(quantity, 0) AS qty
+       FROM inventory WHERE owner_id=$1 AND product_id = ANY($2::int[])`,
+      [ownerId, pids]
+    );
+    stockRows.forEach(r => { stockMap[r.product_id] = Number(r.qty) || 0; });
+  }
+
+  // 计算平均采购价（用于周转估算）
+  const costAvgMap = {};
+  if (pids.length > 0) {
+    const avgRows = await db.queryAll(
+      `SELECT product_id, AVG(ABS(amount)) AS avg_cost
+       FROM transactions
+       WHERE owner_id=$1 AND type='材料采购' AND amount<0 AND product_id = ANY($2::int[])
+       GROUP BY product_id`,
+      [ownerId, pids]
+    );
+    avgRows.forEach(r => { costAvgMap[r.product_id] = Number(r.avg_cost) || 0; });
+  }
+
+  const topProducts = topRows.map(r => {
+    const sale = numOf(r.sale);
+    const cost = numOf(r.cost);
+    const gm = sale > 0 ? (sale - cost) / sale : 0;
+    const stock = stockMap[r.product_id] || 0;
+    // 周转天数 = 库存 / (销售额 / 区间天数)，区间天数按实际天数计算
+    const daysDiff = Math.max(1, Math.ceil((new Date(ed) - new Date(sd)) / 86400000));
+    const dailySale = sale / daysDiff;
+    const turnoverDays = dailySale > 0 ? Math.round(stock / dailySale) : 0;
+    return {
+      product_id: r.product_id,
+      product_name: r.product_name,
+      sale,
+      gm,
+      stock,
+      turnover_days: turnoverDays,
+    };
+  });
+
+  // ---- 4) 库存预警 ----
+  const alerts = [];
+  const ALL_PRODUCTS = await db.queryAll(
+    `SELECT p.id, p.name, p.warning_threshold, COALESCE(i.quantity, 0) AS stock
+     FROM products p
+     LEFT JOIN inventory i ON i.product_id = p.id AND i.owner_id = p.owner_id
+     WHERE p.owner_id=$1`,
+    [ownerId]
+  );
+
+  // 获取每个商品的毛利率用于毛利率预警
+  const gmMap = {};
+  topProducts.forEach(p => { gmMap[p.product_id] = p.gm; });
+
+  // 对不在 topProducts 中的商品也计算毛利率
+  if (ALL_PRODUCTS.length > 0) {
+    const allPids = ALL_PRODUCTS.map(p => p.id);
+    const gmRows = await db.queryAll(
+      `SELECT t.product_id,
+              COALESCE(SUM(CASE WHEN t.type='销售收入' THEN t.amount ELSE 0 END), 0) AS sale,
+              COALESCE(SUM(CASE WHEN t.type='材料采购' THEN ABS(t.amount) ELSE 0 END), 0) AS cost
+       FROM transactions t
+       WHERE t.owner_id=$1 AND t.product_id = ANY($2::int[]) AND t.date BETWEEN $3 AND $4
+       GROUP BY t.product_id`,
+      [ownerId, allPids, sd, ed]
+    );
+    gmRows.forEach(r => {
+      if (!gmMap[r.product_id]) {
+        const s = numOf(r.sale), c = numOf(r.cost);
+        gmMap[r.product_id] = s > 0 ? (s - c) / s : 0;
+      }
+    });
+  }
+
+  const MARGIN_THRESHOLD = 0.15; // 毛利率红线 15%
+
+  ALL_PRODUCTS.forEach(p => {
+    const gm = gmMap[p.product_id];
+    // 毛利率跌破阈值 → 红色预警
+    if (gm !== undefined && gm < MARGIN_THRESHOLD) {
+      alerts.push({
+        level: 'red',
+        product_name: p.name,
+        product_id: p.id,
+        reason: `毛利率 ${(gm * 100).toFixed(1)}% 跌破 ${(MARGIN_THRESHOLD * 100).toFixed(0)}%`,
+        type: 'low_margin',
+      });
+    }
+    // 库存低于安全库存 → 红色"缺货"
+    if (p.warning_threshold > 0 && p.stock <= p.warning_threshold) {
+      alerts.push({
+        level: 'red',
+        product_name: p.name,
+        product_id: p.id,
+        reason: `库存 ${p.stock} ≤ 安全线 ${p.warning_threshold}，建议补货`,
+        type: 'low_stock',
+      });
+    }
+  });
+
+  // 周转天数过高 → 绿色（反向）呆滞风险（对 topProducts 中已计算的）
+  topProducts.forEach(p => {
+    if (p.turnover_days > 90) {
+      alerts.push({
+        level: 'yellow',
+        product_name: p.product_name,
+        product_id: p.product_id,
+        reason: `周转 ${p.turnover_days} 天，库存呆滞风险`,
+        type: 'slow_turnover',
+      });
+    }
+  });
+
+  // 排序：红在前、黄在后
+  alerts.sort((a, b) => (a.level === b.level ? 0 : a.level === 'red' ? -1 : 1));
+
+  return {
+    kpi: {
+      sku_count: skuCount,
+      inventory_value: inventoryValue,
+      avg_gm: salesData.avg_gm,
+    },
+    top_products: topProducts,
+    alerts,
+    alert_count: {
+      red: alerts.filter(a => a.level === 'red').length,
+      yellow: alerts.filter(a => a.level === 'yellow').length,
+    },
+  };
+}
+
+router.get('/analysis/product', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const sd = startDate || '0001-01-01', ed = endDate || '9999-12-31';
+    ok(res, await productMiniAnalysis(req.user.id, sd, ed));
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 8g. 合同分析聚合（小程序「分析 → 合同分析」，PRD 5.4.4） ========== */
+
+/**
+ * 合同分析聚合
+ * @param {number} ownerId
+ * @param {string} sd 起始日期 YYYY-MM-DD
+ * @param {string} ed 结束日期 YYYY-MM-DD
+ */
+async function contractAnalysis(ownerId, sd, ed) {
+  // ---- 1) 合同总览 ----
+  const overviewRow = await db.queryOne(
+    `SELECT
+       COUNT(*) AS total_count,
+       COALESCE(SUM(co.amount), 0) AS total_amount
+     FROM contracts co
+     WHERE co.owner_id=$1 AND co.date BETWEEN $2 AND $3`,
+    [ownerId, sd, ed]
+  );
+  const totalCount = Number(overviewRow?.total_count) || 0;
+  const totalAmount = numOf(overviewRow?.total_amount);
+
+  // 按状态汇总
+  const statusRows = await db.queryAll(
+    `SELECT co.status, COUNT(*) AS cnt, COALESCE(SUM(co.amount), 0) AS amt
+     FROM contracts co
+     WHERE co.owner_id=$1 AND co.date BETWEEN $2 AND $3
+     GROUP BY co.status`,
+    [ownerId, sd, ed]
+  );
+  const statusMap = {};
+  statusRows.forEach(r => {
+    statusMap[r.status] = { count: Number(r.cnt), amount: numOf(r.amt) };
+  });
+
+  const inProgress = statusMap['进行中'] || { count: 0, amount: 0 };
+  const completed = statusMap['已完结'] || { count: 0, amount: 0 };
+  const dunning = statusMap['催收中'] || { count: 0, amount: 0 };
+
+  // ---- 2) 回款统计：通过 transactions 关联合同 ----
+  const paidRow = await db.queryOne(
+    `SELECT COALESCE(SUM(t.amount), 0) AS paid
+     FROM transactions t
+     WHERE t.owner_id=$1 AND t.contract_id IS NOT NULL AND t.amount > 0 AND t.date BETWEEN $2 AND $3`,
+    [ownerId, sd, ed]
+  );
+  const totalPaid = numOf(paidRow?.paid);
+
+  // 执行率
+  const executionRate = totalAmount > 0 ? totalPaid / totalAmount : 0;
+  // 未回款 = 合同总额 − 已回款
+  const unpaidAmount = Math.max(0, totalAmount - totalPaid);
+
+  // ---- 3) 合同执行列表 ----
+  const contractRows = await db.queryAll(
+    `SELECT co.id, co.date, co.status, co.amount,
+            c.name AS customer_name
+     FROM contracts co
+     LEFT JOIN customers c ON co.customer_id = c.id
+     WHERE co.owner_id=$1 AND co.date BETWEEN $2 AND $3
+     ORDER BY co.id DESC`,
+    [ownerId, sd, ed]
+  );
+
+  // 按合同取回款
+  const cids = contractRows.map(r => r.id);
+  // 已回款统计：与 KPI 保持一致，限定在选定日期范围内，避免口径不一致
+  const paidMap = {};
+  if (cids.length > 0) {
+    const paidRows = await db.queryAll(
+      `SELECT contract_id, COALESCE(SUM(amount), 0) AS paid
+       FROM transactions
+       WHERE owner_id=$1 AND contract_id = ANY($2::int[]) AND amount > 0 AND date BETWEEN $3 AND $4
+       GROUP BY contract_id`,
+      [ownerId, cids, sd, ed]
+    );
+    paidRows.forEach(r => { paidMap[r.contract_id] = numOf(r.paid); });
+  }
+
+  // 取最近回款日期（用于账龄，不限定范围以便反映真实账龄）
+  const lastPaidMap = {};
+  if (cids.length > 0) {
+    const lastRows = await db.queryAll(
+      `SELECT contract_id, MAX(date) AS last_date
+       FROM transactions
+       WHERE owner_id=$1 AND contract_id = ANY($2::int[]) AND amount > 0
+       GROUP BY contract_id`,
+      [ownerId, cids]
+    );
+    lastRows.forEach(r => { lastPaidMap[r.contract_id] = r.last_date; });
+  }
+
+  const contractList = contractRows.map(r => {
+    const paid = paidMap[r.id] || 0;
+    const unpaid = Math.max(0, numOf(r.amount) - paid);
+    const lastDate = lastPaidMap[r.id] || r.date || '';
+    const ageDays = daysSince(lastDate);
+    return {
+      id: r.id,
+      customer_name: r.customer_name || '—',
+      date: r.date || '',
+      amount: numOf(r.amount),
+      paid,
+      unpaid,
+      status: r.status || '进行中',
+      age_days: ageDays,
+    };
+  });
+
+  return {
+    kpi: {
+      total_amount: totalAmount,
+      execution_rate: executionRate,
+      unpaid_amount: unpaidAmount,
+      status_summary: {
+        in_progress: { count: inProgress.count, amount: inProgress.amount },
+        completed: { count: completed.count, amount: completed.amount },
+        dunning: { count: dunning.count, amount: dunning.amount },
+      },
+    },
+    contracts: contractList,
+  };
+}
+
+router.get('/analysis/contract', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const sd = startDate || '0001-01-01', ed = endDate || '9999-12-31';
+    ok(res, await contractAnalysis(req.user.id, sd, ed));
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 8h. 费用分析聚合（小程序「分析 → 费用分析」，PRD 5.4.5） ==========
+ * 三个二级标签：费用构成、费用趋势（近 6 月）、单元费用。
+ * 视觉统一使用绿色语义（支出/反向）。
+ */
+
+/**
+ * 费用分析聚合
+ * @param {number} ownerId
+ * @param {string} sd 起始日期 YYYY-MM-DD
+ * @param {string} ed 结束日期 YYYY-MM-DD
+ */
+async function expenseAnalysis(ownerId, sd, ed) {
+  // ---- 1) 费用构成：按 type 聚合支出类（amount<0），取 abs ----
+  const composeRows = await db.queryAll(
+    `SELECT t.type AS name,
+            COALESCE(SUM(ABS(t.amount)), 0) AS amount
+     FROM transactions t
+     WHERE t.owner_id=$1 AND t.amount < 0 AND t.date BETWEEN $2 AND $3
+     GROUP BY t.type
+     ORDER BY amount DESC`,
+    [ownerId, sd, ed]
+  );
+  const compose = composeRows.map(r => ({ name: r.name, amount: numOf(r.amount) }));
+  const totalExpense = compose.reduce((s, r) => s + r.amount, 0);
+
+  // ---- 2) 费用趋势：近 6 个月逐月支出汇总 ----
+  // 全部使用本地时区构造 Date(y, m, d)，避免字符串解析为 UTC 导致的时区偏移
+  const trendData = [];
+  const endParts = String(ed).split('-').map(Number);
+  const endYear = endParts[0], endMonth = endParts[1];
+  for (let i = 5; i >= 0; i--) {
+    const m = new Date(endYear, endMonth - 1 - i, 1); // 本地时间当月 1 号
+    const ms = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`;
+    // 下月 1 号前一天的 0 点（本地时间）即本月最后一天
+    const mEnd = new Date(m.getFullYear(), m.getMonth() + 1, 0);
+    const mEndStr = `${mEnd.getFullYear()}-${String(mEnd.getMonth() + 1).padStart(2, '0')}-${String(mEnd.getDate()).padStart(2, '0')}`;
+
+    const monthRow = await db.queryOne(
+      `SELECT COALESCE(SUM(ABS(amount)), 0) AS amt
+       FROM transactions
+       WHERE owner_id=$1 AND amount < 0 AND date BETWEEN $2 AND $3`,
+      [ownerId, ms + '-01', mEndStr]
+    );
+    trendData.push({ month: ms, amount: numOf(monthRow?.amt) });
+  }
+
+  // ---- 3) 单元费用：按 unit 分组支出 ----
+  const unitRows = await db.queryAll(
+    `SELECT COALESCE(t.unit, '全公司') AS unit,
+            COALESCE(SUM(ABS(t.amount)), 0) AS amount
+     FROM transactions t
+     WHERE t.owner_id=$1 AND t.amount < 0 AND t.date BETWEEN $2 AND $3
+     GROUP BY COALESCE(t.unit, '全公司')
+     ORDER BY amount DESC`,
+    [ownerId, sd, ed]
+  );
+  const units = unitRows.map(r => ({ unit: r.unit, amount: numOf(r.amount) }));
+  const unitTotal = units.reduce((s, r) => s + r.amount, 0);
+
+  return {
+    compose,
+    total_expense: totalExpense,
+    trend: trendData,
+    units,
+    unit_total: unitTotal,
+  };
+}
+
+router.get('/analysis/expense', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const sd = startDate || '0001-01-01', ed = endDate || '9999-12-31';
+    ok(res, await expenseAnalysis(req.user.id, sd, ed));
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 8i. 阿米巴核算聚合（小程序「分析 → 阿米巴核算」，PRD 5.4.6） ==========
+ * 单位时间附加值 = 附加价值 / 总劳动时间。
+ * work_hours / employees 均无 unit 字段，单元维度降级为附加值总额。
+ */
+
+/**
+ * 阿米巴核算聚合
+ * @param {number} ownerId
+ * @param {string} sd 起始日期 YYYY-MM-DD
+ * @param {string} ed 结束日期 YYYY-MM-DD
+ */
+async function amoebaAnalysis(ownerId, sd, ed) {
+  // ---- 1) 复用驾驶舱的基础计算逻辑（addedValue / totalHours / totalSalary） ----
+  const { where: txWhere, params: txParams } = buildTxFilter(ownerId, sd, ed, null);
+
+  const typeRows = await db.queryAll(
+    `SELECT t.type AS type, COALESCE(SUM(t.amount), 0) AS raw, COALESCE(SUM(ABS(t.amount)), 0) AS abs_amt
+     FROM transactions t WHERE ${txWhere} GROUP BY t.type`,
+    txParams
+  );
+  const raw = {}, absAmt = {};
+  typeRows.forEach((r) => { raw[r.type] = numOf(r.raw); absAmt[r.type] = numOf(r.abs_amt); });
+
+  const salesIncome = raw['销售收入'] || 0;
+  const cashIncome = raw['现金收入'] || 0;
+  const otherIncome = raw['其他收入'] || 0;
+  const totalIncome = salesIncome + cashIncome + otherIncome;
+  const materialCost = absAmt['材料采购'] || 0;
+  const processCost = absAmt['委托加工'] || 0;
+  const consumeCost = materialCost + processCost;
+  const miscCost = absAmt['杂费支出'] || 0;
+  const addedValue = totalIncome - consumeCost - miscCost;
+
+  // ---- 2) 总工资 & 总劳动时间 ----
+  const smk = String(sd).slice(0, 7), emk = String(ed).slice(0, 7);
+  const salaryRow = await db.queryOne(
+    `SELECT COALESCE(SUM(wh.hours * e.hourly_rate), 0) AS salary, COALESCE(SUM(wh.hours), 0) AS hours
+     FROM work_hours wh JOIN employees e ON e.id = wh.employee_id
+     WHERE wh.owner_id=$1 AND wh.month BETWEEN $2 AND $3 AND COALESCE(e.status, 'active') = 'active'`,
+    [ownerId, smk, emk]
+  );
+  const totalSalary = numOf(salaryRow?.salary);
+  const totalHours = numOf(salaryRow?.hours);
+
+  // 单位时间附加值（¥/人·小时）
+  const hourlyAddedValue = totalHours > 0 ? addedValue / totalHours : 0;
+  // 单位时间劳务费
+  const hourlyLaborCost = totalHours > 0 ? totalSalary / totalHours : 0;
+  // 盈亏临界 = 附加值 − 劳务费
+  const breakeven = addedValue - totalSalary;
+
+  // ---- 3) 上月数据（用于环比） ----
+  // 用本地时区 Date(y, m, d) 计算上月起止，避免字符串 UTC 解析的时区偏移
+  const prevSd = new Date(Number(String(sd).slice(0, 4)), Number(String(sd).slice(5, 7)) - 2, 1);
+  const prevEd = new Date(Number(String(ed).slice(0, 4)), Number(String(ed).slice(5, 7)) - 1, 0);
+  const prevSdStr = `${prevSd.getFullYear()}-${String(prevSd.getMonth() + 1).padStart(2, '0')}-${String(prevSd.getDate()).padStart(2, '0')}`;
+  const prevEdStr = `${prevEd.getFullYear()}-${String(prevEd.getMonth() + 1).padStart(2, '0')}-${String(prevEd.getDate()).padStart(2, '0')}`;
+
+  let prevHourlyAddedValue = null;
+  try {
+    const prevFilter = buildTxFilter(ownerId, prevSdStr, prevEdStr, null);
+    const prevTypeRows = await db.queryAll(
+      `SELECT t.type AS type, COALESCE(SUM(t.amount), 0) AS raw, COALESCE(SUM(ABS(t.amount)), 0) AS abs_amt
+       FROM transactions t WHERE ${prevFilter.where} GROUP BY t.type`,
+      prevFilter.params
+    );
+    const pRaw = {}, pAbs = {};
+    prevTypeRows.forEach((r) => { pRaw[r.type] = numOf(r.raw); pAbs[r.type] = numOf(r.abs_amt); });
+    const pAdded = (pRaw['销售收入'] || 0) + (pRaw['现金收入'] || 0) + (pRaw['其他收入'] || 0)
+      - ((pAbs['材料采购'] || 0) + (pAbs['委托加工'] || 0)) - (pAbs['杂费支出'] || 0);
+
+    const pSmk = String(prevSdStr).slice(0, 7), pEmk = String(prevEdStr).slice(0, 7);
+    const prevSalRow = await db.queryOne(
+      `SELECT COALESCE(SUM(wh.hours * e.hourly_rate), 0) AS salary, COALESCE(SUM(wh.hours), 0) AS hours
+       FROM work_hours wh JOIN employees e ON e.id = wh.employee_id
+       WHERE wh.owner_id=$1 AND wh.month BETWEEN $2 AND $3 AND COALESCE(e.status, 'active') = 'active'`,
+      [ownerId, pSmk, pEmk]
+    );
+    const prevHours = numOf(prevSalRow?.hours);
+    if (prevHours > 0) prevHourlyAddedValue = pAdded / prevHours;
+  } catch (_) { /* 上月数据缺失不影响当期 */ }
+
+  // ---- 4) 各单元单位时间附加值（因 work_hours 无 unit 字段，降级为附加值总额） ----
+  const unitRows = await db.queryAll(
+    `SELECT COALESCE(t.unit, '全公司') AS unit,
+            COALESCE(SUM(CASE WHEN t.type IN ('销售收入','现金收入','其他收入') THEN t.amount
+                              WHEN t.type IN ('材料采购','委托加工','杂费支出') THEN -ABS(t.amount)
+                              ELSE 0 END), 0) AS added_value
+     FROM transactions t WHERE ${txWhere}
+     GROUP BY COALESCE(t.unit, '全公司') ORDER BY added_value DESC`,
+    txParams
+  );
+  const unitValues = unitRows.map(r => ({
+    unit: r.unit,
+    added_value: numOf(r.added_value),
+  }));
+
+  // ---- 5) 单元总贡献：销售额、经费（材料+加工+杂费）、附加值、工时（不可用）、单位时间附加值（不可用） ----
+  const unitContribRows = await db.queryAll(
+    `SELECT COALESCE(t.unit, '全公司') AS unit,
+            COALESCE(SUM(CASE WHEN t.type IN ('销售收入','现金收入','其他收入') THEN t.amount ELSE 0 END), 0) AS sales,
+            COALESCE(SUM(CASE WHEN t.type IN ('材料采购','委托加工','杂费支出') THEN ABS(t.amount) ELSE 0 END), 0) AS expense,
+            COALESCE(SUM(CASE WHEN t.type IN ('销售收入','现金收入','其他收入') THEN t.amount
+                              WHEN t.type IN ('材料采购','委托加工','杂费支出') THEN -ABS(t.amount)
+                              ELSE 0 END), 0) AS added_value
+     FROM transactions t WHERE ${txWhere}
+     GROUP BY COALESCE(t.unit, '全公司') ORDER BY added_value DESC`,
+    txParams
+  );
+  const unitContribs = unitContribRows.map(r => ({
+    unit: r.unit,
+    sales: numOf(r.sales),
+    expense: numOf(r.expense),
+    added_value: numOf(r.added_value),
+    hours: null,        // work_hours 无 unit 字段，不可用
+    hourly_value: null, // 同上
+  }));
+
+  return {
+    kpi: {
+      added_value: addedValue,
+      total_hours: totalHours,
+      hourly_labor_cost: hourlyLaborCost,
+      breakeven: breakeven,
+    },
+    hourly_added_value: hourlyAddedValue,
+    prev_hourly_added_value: prevHourlyAddedValue,
+    unit_values: unitValues,
+    unit_contribs: unitContribs,
+    unit_hours_available: false,
+  };
+}
+
+router.get('/analysis/amoeba', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const sd = startDate || '0001-01-01', ed = endDate || '9999-12-31';
+    ok(res, await amoebaAnalysis(req.user.id, sd, ed));
   } catch (e) { fail400(res, e.message); }
 });
 
