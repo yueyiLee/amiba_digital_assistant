@@ -35,7 +35,8 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: s.ready ? 'ok' : (s.error ? 'degraded' : 'starting'),
     time: new Date().toISOString(),
-    db: s
+    db: s,
+    diag: db.getDiag ? db.getDiag() : null
   });
 });
 

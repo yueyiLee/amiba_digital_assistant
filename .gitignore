@@ -24,6 +24,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+.codebuddy/
 
 # 日志
 *.log

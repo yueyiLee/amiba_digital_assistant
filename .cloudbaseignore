@@ -1,0 +1,30 @@
+# 依赖以 deps 形式随函数上传（scf_bootstrap 启动时还原为 node_modules）
+node_modules/
+
+# 本地环境 / 敏感信息（部署后在控制台手动配置）
+.env
+.env.local
+
+# 本地 SQLite（云端改用内置 PostgreSQL）
+database.sqlite
+database.sqlite-journal
+database.sqlite-wal
+database.sqlite-shm
+data/
+
+# 版本控制 / 编辑器 / 日志
+.git/
+.gitignore
+.vscode/
+.idea/
+*.log
+npm-debug.log*
+
+# 文档（非运行必需）
+docs/
+*.md
+
+# 部署配置本身无需上传
+.cloudbaseignore
+.dockerignore
+Dockerfile

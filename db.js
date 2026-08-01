@@ -23,6 +23,21 @@ let dbError = null;
 function setDbStatus(ready, error) { dbReady = ready; dbError = error || null; }
 function getStatus() { return { ready: dbReady, error: dbError }; }
 
+// 诊断信息：暴露容器内关键环境变量是否存在（不暴露取值），便于排查连接问题
+function diag() {
+  const relevant = Object.keys(process.env).filter((k) =>
+    /^(TENCENTCLOUD_|TCB_|SCF_|PG|POSTGRES|DATABASE|PGHOST|PGUSER|PGPASSWORD|PGDATABASE|PGPORT)/i.test(k)
+  );
+  return {
+    mode: hasNativePgConfig ? 'native-pg' : (hasCloudCreds ? 'cloud-executePGSql' : 'native-local'),
+    hasCloudCreds,
+    hasNativePgConfig,
+    envId: ENV,
+    poolConnected: pool.totalCount > 0,
+    envKeys: relevant
+  };
+}
+
 // 服装行业默认商品分类（系统预设，所有账号同步拥有，便于直接录入商品）
 const DEFAULT_CATEGORIES = [
   ['上衣', '短袖'], ['上衣', '长袖'], ['上衣', '卫衣'], ['上衣', '衬衫'],
@@ -100,16 +115,26 @@ async function cloudQuery(Sql) {
   }
 }
 
-const pool = new Pool({
-  user: process.env.PG_USER || process.env.PGUSER || 'amoeba',
-  host: process.env.PG_HOST || process.env.PGHOST || 'localhost',
-  database: process.env.PG_DATABASE || process.env.PGDATABASE || 'amoeba_app',
-  password: process.env.PG_PASSWORD || process.env.PGPASSWORD || 'amoeba123',
-  port: parseInt(process.env.PG_PORT || process.env.PGPORT || '5432', 10),
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000
-});
+const pool = process.env.DATABASE_URL
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000
+    })
+  : new Pool({
+      user: process.env.PG_USER || process.env.PGUSER || 'amoeba',
+      host: process.env.PG_HOST || process.env.PGHOST || 'localhost',
+      database: process.env.PG_DATABASE || process.env.PGDATABASE || 'amoeba_app',
+      password: process.env.PG_PASSWORD || process.env.PGPASSWORD || 'amoeba123',
+      port: parseInt(process.env.PG_PORT || process.env.PGPORT || '5432', 10),
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000
+    });
+
+// 是否通过环境变量显式配置了原生 PostgreSQL 连接（Cloud Run / 自建环境）
+const hasNativePgConfig = !!(process.env.DATABASE_URL || process.env.PG_HOST || process.env.PG_DATABASE);
 
 // ===== 云端适配：executePGSql 的结果 → { rows: [{ col: val }] } =====
 function coerce(v) {
@@ -150,7 +175,10 @@ function bind(text, params) {
 }
 
 async function query(text, params) {
-  if (cloudApp || hasCloudCreds) {
+  // 优先使用原生 pg 连接（显式配置了 DATABASE_URL / PG_* 时）。
+  // 注：Cloud Run 注入了 TENCENTCLOUD_* 临时密钥，但 manager-node 的 executePGSql
+  // 在云托管网络下会挂起，因此只要配置了原生 PG 连接就走原生驱动。
+  if (!hasNativePgConfig && (cloudApp || hasCloudCreds)) {
     const res = await cloudQuery(bind(text, params));
     return adapt(res);
   }
@@ -762,4 +790,4 @@ async function init() {
  }
 }
 
-module.exports = { pool, query, queryOne, queryAll, insertReturning, init, getStatus, seedForUser };
+module.exports = { pool, query, queryOne, queryAll, insertReturning, init, getStatus, getDiag: diag, seedForUser };

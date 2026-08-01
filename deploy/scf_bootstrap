@@ -1,0 +1,10 @@
+#!/bin/bash
+# CloudBase HTTP 云函数启动脚本（Web 函数必须监听 9000）
+export PORT=9000
+# 依赖通过 CloudBase 文件层（Layer）挂载到 /opt/node_modules
+export NODE_PATH=/opt/node_modules
+# 兼容：若以 deps 目录随包上传，则还原为 node_modules
+if [ -d deps ] && [ ! -d node_modules ]; then
+  mv deps node_modules
+fi
+node server.js
