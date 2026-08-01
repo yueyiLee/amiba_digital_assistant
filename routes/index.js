@@ -909,7 +909,10 @@ async function productAnalysis(ownerId, direction, sd, ed) {
       WHERE co.owner_id=$1 AND co.direction=$2 AND co.date BETWEEN $3 AND $4
       ORDER BY ci.product_id, co.date`, [ownerId, direction, sd, ed]);
   const byPid = {};
-  series.forEach(s => { (byPid[s.product_id] = byPid[s.product_id] || []).push({ date: s.date, price: Number(s.actual_price) || 0, name: s.product_name }); });
+  series.forEach(s => {
+    if (s.product_id == null) return;
+    (byPid[s.product_id] = byPid[s.product_id] || []).push({ date: s.date, price: Number(s.actual_price) || 0, name: s.product_name });
+  });
   const priceChange = Object.values(byPid).map(arr => {
     const prices = arr.map(x => x.price).filter(v => v > 0);
     if (prices.length < 2) return null;
@@ -970,6 +973,240 @@ router.get('/analysis/product-purchase', async (req, res) => {
     const { startDate, endDate } = req.query;
     const sd = startDate || '0001-01-01', ed = endDate || '9999-12-31';
     ok(res, await productAnalysis(req.user.id, 'purchase', sd, ed));
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 8d. 分析驾驶舱聚合（小程序「分析 → 驾驶舱」） ==========
+ * 口径严格对齐 PC 端 public/js/calculator.js 的 calculateMetrics()
+ * 与 public/js/analysis.js 的 detectAlerts() 默认规则，禁止自创公式。
+ */
+
+// 驾驶舱预警默认阈值（对应 analysis.js 的 DEFAULT_ALERT_RULES）
+const COCKPIT_ALERT_RULES = {
+  /** 客户应收：>= 80000 红 */
+  customerRecvRed: 80000,
+  /** 客户应收：>= 40000 黄 */
+  customerRecvYellow: 40000,
+  /** 商品毛利率：< 0.15 红 */
+  productMargin: 0.15,
+  /** 库存呆滞：> 60 天 黄 */
+  productStockAge: 60,
+  /** 净现金流：< -20000 红 */
+  cashGap: -20000,
+};
+
+/** 驾驶舱预警最多返回条数，避免移动端长列表 */
+const COCKPIT_ALERT_LIMIT = 10;
+
+const numOf = (v) => Number(v) || 0;
+
+/**
+ * 构建 transactions 表 WHERE 子句及对应参数数组。
+ * 确保 SQL 占位符与参数数组严格一一对应，避免分散耦合。
+ * @param {number} ownerId
+ * @param {string} sd
+ * @param {string} ed
+ * @param {string|null} unit '全部单元' 或空值表示不过滤
+ * @returns {{ where: string, params: Array }}
+ */
+function buildTxFilter(ownerId, sd, ed, unit) {
+  const useUnit = unit && unit !== '全部单元';
+  return {
+    where: `t.owner_id=$1 AND t.date BETWEEN $2 AND $3${useUnit ? ' AND t.unit=$4' : ''}`,
+    params: useUnit ? [ownerId, sd, ed, unit] : [ownerId, sd, ed],
+  };
+}
+
+/**
+ * 分析驾驶舱聚合
+ * @param {number} ownerId 租户 id
+ * @param {string} sd 起始日期 YYYY-MM-DD
+ * @param {string} ed 结束日期 YYYY-MM-DD
+ * @param {string} unit 单元筛选，'全部单元' 表示不过滤
+ */
+async function cockpitAnalysis(ownerId, sd, ed, unit) {
+  const { where: txWhere, params: txParams } = buildTxFilter(ownerId, sd, ed, unit);
+
+  // ---- 1) 按 type 汇总（一次扫描拿全部基础层指标）----
+  // 收入类按 SUM(amount) 累加，支出类按 SUM(ABS(amount)) 累加（对齐 calculator.js sumByType）
+  const typeRows = await db.queryAll(
+    `SELECT t.type AS type, COALESCE(SUM(t.amount), 0) AS raw, COALESCE(SUM(ABS(t.amount)), 0) AS abs_amt
+     FROM transactions t WHERE ${txWhere} GROUP BY t.type`,
+    txParams
+  );
+  const raw = {}, absAmt = {};
+  typeRows.forEach((r) => { raw[r.type] = numOf(r.raw); absAmt[r.type] = numOf(r.abs_amt); });
+
+  // 基础层（calculator.js:139-151）
+  const salesIncome = raw['销售收入'] || 0;
+  const cashIncome = raw['现金收入'] || 0;
+  const otherIncome = raw['其他收入'] || 0;
+  const totalIncome = salesIncome + cashIncome + otherIncome;
+  const materialCost = absAmt['材料采购'] || 0;
+  const processCost = absAmt['委托加工'] || 0;
+  const consumeCost = materialCost + processCost;
+  const miscCost = absAmt['杂费支出'] || 0;
+  const cashExpense = absAmt['现金支出'] || 0;
+  const taxCost = absAmt['税金'] || 0;
+  const receivable = salesIncome - cashIncome;
+
+  // 阿米巴核心层（calculator.js:154-166）
+  const addedValue = totalIncome - consumeCost - miscCost;
+  const totalExpense = materialCost + processCost + miscCost + taxCost;
+  const payable = totalExpense - cashExpense;
+
+  // ---- 2) 总工资 = Σ(在岗员工工时 × 时薪)（calculator.js:156-161）----
+  // work_hours.month 为 YYYY-MM，按所选区间的年月过滤
+  const smk = String(sd).slice(0, 7), emk = String(ed).slice(0, 7);
+  const salaryRow = await db.queryOne(
+    `SELECT COALESCE(SUM(wh.hours * e.hourly_rate), 0) AS salary, COALESCE(SUM(wh.hours), 0) AS hours
+     FROM work_hours wh JOIN employees e ON e.id = wh.employee_id
+     WHERE wh.owner_id=$1 AND wh.month BETWEEN $2 AND $3 AND COALESCE(e.status, 'active') = 'active'`,
+    [ownerId, smk, emk]
+  );
+  const totalSalary = numOf(salaryRow && salaryRow.salary);
+  const totalHours = numOf(salaryRow && salaryRow.hours);
+
+  const profit = addedValue - totalSalary - taxCost;
+  const netCashFlow = cashIncome - cashExpense;
+
+  // ---- 3) 库存占用 = Σ(quantity × avg_price) ----
+  const invRow = await db.queryOne(
+    `SELECT COALESCE(SUM(quantity * avg_price), 0) AS v FROM inventory WHERE owner_id=$1`,
+    [ownerId]
+  );
+  const inventoryValue = numOf(invRow && invRow.v);
+
+  // ---- 4) 按客户应收（analysis.js:114-119：销售收入 - 现金收入）----
+  const custRows = await db.queryAll(
+    `SELECT t.customer_id, c.name AS customer_name,
+            COALESCE(SUM(CASE WHEN t.type='销售收入' THEN t.amount ELSE 0 END), 0) AS sale,
+            COALESCE(SUM(CASE WHEN t.type='销售收入' THEN t.amount
+                              WHEN t.type='现金收入' THEN -t.amount ELSE 0 END), 0) AS recv
+     FROM transactions t JOIN customers c ON c.id = t.customer_id
+     WHERE ${txWhere} AND t.customer_id IS NOT NULL
+     GROUP BY t.customer_id, c.name`,
+    txParams
+  );
+
+  // ---- 5) 按商品销售/成本/毛利率（analysis.js:341-354）----
+  const prodRows = await db.queryAll(
+    `SELECT t.product_id, p.name AS product_name,
+            COALESCE(SUM(CASE WHEN t.type='销售收入' THEN t.amount ELSE 0 END), 0) AS sale,
+            COALESCE(SUM(CASE WHEN t.type='材料采购' THEN ABS(t.amount) ELSE 0 END), 0) AS cost
+     FROM transactions t JOIN products p ON p.id = t.product_id
+     WHERE ${txWhere} AND t.product_id IS NOT NULL
+     GROUP BY t.product_id, p.name`,
+    txParams
+  );
+  const productMetrics = prodRows.map((r) => {
+    const sale = numOf(r.sale), cost = numOf(r.cost);
+    return { id: r.product_id, name: r.product_name, sale, cost, gm: sale > 0 ? (sale - cost) / sale : 0 };
+  });
+
+  // ---- 6) 库存呆滞（analysis.js:156-169）----
+  const staleRows = await db.queryAll(
+    `SELECT i.product_id, p.name AS product_name, i.quantity,
+            EXTRACT(EPOCH FROM (NOW() - i.updated_at)) / 86400 AS days
+     FROM inventory i LEFT JOIN products p ON p.id = i.product_id
+     WHERE i.owner_id=$1 AND i.quantity > 0 AND i.updated_at IS NOT NULL`,
+    [ownerId]
+  );
+
+  // ---- 7) 组装预警（红在前、黄在后，对齐 analysis.js:198-199）----
+  const alerts = [];
+  custRows.forEach((r) => {
+    const recv = numOf(r.recv);
+    if (recv >= COCKPIT_ALERT_RULES.customerRecvRed) {
+      alerts.push({ level: 'red', title: `客户【${r.customer_name}】应收 ${fmtCny(recv)}`, sub: '超过预警阈值，建议立即跟进回款', value: fmtCny(recv), jumpTo: 'customer' });
+    } else if (recv >= COCKPIT_ALERT_RULES.customerRecvYellow) {
+      alerts.push({ level: 'yellow', title: `客户【${r.customer_name}】应收 ${fmtCny(recv)}`, sub: '需保持关注', value: fmtCny(recv), jumpTo: 'customer' });
+    }
+  });
+  productMetrics.forEach((r) => {
+    if (r.sale > 0 && r.gm < COCKPIT_ALERT_RULES.productMargin) {
+      const pct = `${(r.gm * 100).toFixed(1)}%`;
+      alerts.push({ level: 'red', title: `商品【${r.name}】毛利率 ${pct}`, sub: '毛利率跌破健康线', value: pct, jumpTo: 'product' });
+    }
+  });
+  staleRows.forEach((r) => {
+    const days = Math.floor(numOf(r.days));
+    if (days > COCKPIT_ALERT_RULES.productStockAge) {
+      alerts.push({ level: 'yellow', title: `商品【${r.product_name || '未知商品'}】库存呆滞 ${days} 天`, sub: '建议盘点/促销/调拨', value: `${days} 天`, jumpTo: 'product' });
+    }
+  });
+  if (netCashFlow < COCKPIT_ALERT_RULES.cashGap) {
+    alerts.push({ level: 'red', title: `净现金流 ${fmtCny(netCashFlow)}`, sub: '现金缺口较大，关注回款', value: fmtCny(netCashFlow), jumpTo: 'overview' });
+  }
+  alerts.sort((a, b) => (a.level === b.level ? 0 : a.level === 'red' ? -1 : 1));
+
+  // ---- 8) 各维度 Top 榜 ----
+  // 单元附加价值：work_hours / employees 均无 unit 字段，无法按单元拆分工时，
+  // 故降级为「按单元的附加价值总额」，由 unit_hours_available=false 告知前端。
+  const unitRows = await db.queryAll(
+    `SELECT COALESCE(t.unit, '全公司') AS unit,
+            COALESCE(SUM(CASE WHEN t.type IN ('销售收入','现金收入','其他收入') THEN t.amount
+                              WHEN t.type IN ('材料采购','委托加工','杂费支出') THEN -ABS(t.amount)
+                              ELSE 0 END), 0) AS added_value
+     FROM transactions t WHERE ${txWhere}
+     GROUP BY COALESCE(t.unit, '全公司') ORDER BY added_value DESC LIMIT 1`,
+    txParams
+  );
+  const topCustomer = custRows.length > 0 ? custRows.slice().sort((a, b) => numOf(b.sale) - numOf(a.sale))[0] : undefined;
+  const topProduct = productMetrics.length > 0 ? productMetrics.slice().sort((a, b) => b.sale - a.sale)[0] : undefined;
+  const topUnit = unitRows.length > 0 ? unitRows[0] : undefined;
+
+  const tops = [
+    {
+      label: 'Top 客户贡献',
+      name: topCustomer ? topCustomer.customer_name : '',
+      value: topCustomer ? fmtCny(numOf(topCustomer.sale)) : '',
+      jumpTo: 'customer',
+    },
+    {
+      label: 'Top 商品销售',
+      name: topProduct ? topProduct.name : '',
+      value: topProduct ? fmtCny(topProduct.sale) : '',
+      jumpTo: 'product',
+    },
+    {
+      label: '单元附加价值排行',
+      name: topUnit ? topUnit.unit : '',
+      value: topUnit ? fmtCny(numOf(topUnit.added_value)) : '',
+      jumpTo: 'amoeba',
+    },
+  ];
+
+  return {
+    kpi: {
+      total_sales: salesIncome,
+      total_profit: profit,
+      receivable,
+      payable,
+      net_cash_flow: netCashFlow,
+      inventory_value: inventoryValue,
+      profit_rate: salesIncome > 0 ? (profit / salesIncome) * 100 : 0,
+      added_value: addedValue,
+      total_hours: totalHours,
+      total_salary: totalSalary,
+    },
+    alerts: alerts.slice(0, COCKPIT_ALERT_LIMIT),
+    alert_count: { red: alerts.filter((a) => a.level === 'red').length, yellow: alerts.filter((a) => a.level === 'yellow').length },
+    tops,
+    unit_hours_available: false,
+  };
+}
+
+/** 驾驶舱内部金额格式化（¥ + 千分位整数，与 PC 端 fmtMetricValue 一致） */
+function fmtCny(v) {
+  return `¥${Math.round(Number(v) || 0).toLocaleString('en-US')}`;
+}
+
+router.get('/analysis/cockpit', async (req, res) => {
+  try {
+    const { startDate, endDate, unit } = req.query;
+    const sd = startDate || '0001-01-01', ed = endDate || '9999-12-31';
+    ok(res, await cockpitAnalysis(req.user.id, sd, ed, unit));
   } catch (e) { fail400(res, e.message); }
 });
 
