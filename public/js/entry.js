@@ -5,6 +5,10 @@
 const Entry = (() => {
   let direction = 'expense'; // expense / income
 
+  // 需要关联合同 + 红字提示的收支类别（按需求文档：仅这几类需要合同关联，杂费/税金等不需要）
+  const LINKABLE_TYPES = ['材料采购', '委托加工', '现金支出', '销售收入', '现金收入'];
+  function isLinkableType(t) { return LINKABLE_TYPES.indexOf(t) >= 0; }
+
   // 联动规则来自后端 expense_types 配置（link_customer / link_product / link_cat）
   function getLinkCfg(typeName, dir) {
     const t = Storage.getExpenseTypesSync(dir, { enabledOnly: false }).find(x => x.name === typeName);
@@ -12,7 +16,7 @@ const Entry = (() => {
     return { customer: !!t.link_customer, product: !!t.link_product, cat: t.link_cat || null };
   }
 
-  // 根据当前方向 + 交易类型，显示/隐藏 客户 / 商品 / 支出项细分 字段，并填充对应选项
+  // 根据当前方向 + 交易类型，显示/隐藏 客户 / 商品 / 支出项细分 / 关联合同 字段，并填充对应选项
   function applyTypeLinkage() {
     const type = document.getElementById('entryType').value;
     const cfg = getLinkCfg(type, direction);
@@ -21,6 +25,7 @@ const Entry = (() => {
     const prodGroup = document.getElementById('entryProductGroup');
     const catGroup = document.getElementById('entryExpenseCatGroup');
     const catSel = document.getElementById('entryExpenseCat');
+    const contractGroup = document.getElementById('entryContractGroup');
 
     custGroup.style.display = cfg.customer ? '' : 'none';
     prodGroup.style.display = cfg.product ? '' : 'none';
@@ -38,6 +43,15 @@ const Entry = (() => {
       catSel.innerHTML = '';
     }
 
+    // 关联合同字段：仅「材料采购/委托加工/现金支出/销售收入/现金收入」5 类需要
+    // 杂费、税金、其他等类别 → 隐藏合同组 + 清空已选
+    const needContract = isLinkableType(type);
+    if (contractGroup) contractGroup.style.display = needContract ? '' : 'none';
+    if (!needContract) {
+      const sel = document.getElementById('entryContract');
+      if (sel) sel.value = '';
+    }
+
     // 隐藏的字段清空已选值，避免提交时带入脏数据
     if (!cfg.customer) {
       document.getElementById('entryCustomerId').value = '';
@@ -49,11 +63,25 @@ const Entry = (() => {
     }
   }
 
+  // 录入表单刷新（供其他模块新增客户/商品后同步下拉）
+  function render() { renderAdd(); }
+
+  // 关联合同下拉：收入方向展示「销售合同」(direction=sale)，支出方向展示「采购合同」(direction=purchase)
+  function renderContractOptions() {
+    const sel = document.getElementById('entryContract');
+    if (!sel) return;
+    const wantDir = direction === 'income' ? 'sale' : 'purchase';
+    const contracts = Storage.getContractsSync().filter(c => (c.direction || 'sale') === wantDir);
+    sel.innerHTML = '<option value="">— 不关联 —</option>' + contracts.map(c =>
+      `<option value="${c.id}">${escapeHtml(c.display_name || ('#合同' + c.id))}</option>`).join('');
+  }
+
   // 收支录入页：仅渲染录入表单（左半）
   function renderAdd() {
     renderTypeOptions();
     applyTypeLinkage();
     renderUnitOptions();
+    renderContractOptions();
     // 更新金额符号为设置中的货币
     document.querySelector('.amount-wrap .cur').textContent = Calculator.getCurrency();
     // 默认日期为今天
@@ -66,9 +94,6 @@ const Entry = (() => {
     renderCategoryFilter();
     renderRecords();
   }
-
-  // 录入表单刷新（供其他模块新增客户/商品后同步下拉）
-  function render() { renderAdd(); }
 
   function renderTypeOptions() {
     const sel = document.getElementById('entryType');
@@ -278,13 +303,14 @@ const Entry = (() => {
     const sign = document.getElementById('entrySign');
     if (dir === 'expense') {
       expBtn.classList.add('active'); incBtn.classList.remove('active');
-      sign.textContent = '−'; sign.style.color = '#dc2626'; sign.style.background = '#fef2f2';
+      sign.textContent = '−'; sign.style.color = '#16A34A'; sign.style.background = '#f0fdf4';
     } else {
       incBtn.classList.add('active'); expBtn.classList.remove('active');
-      sign.textContent = '+'; sign.style.color = '#059669'; sign.style.background = '#ecfdf5';
+      sign.textContent = '+'; sign.style.color = '#E5484D'; sign.style.background = '#fef2f2';
     }
     renderTypeOptions();
     applyTypeLinkage();
+    renderContractOptions();
   }
 
   async function submit() {
@@ -295,6 +321,10 @@ const Entry = (() => {
     const productId = document.getElementById('entryProductId').value || null;
     const date = document.getElementById('entryDate').value;
     const note = document.getElementById('entryNote').value;
+    // 非白名单类别 → 强制忽略 contractId（避免误带合同）
+    const contractId = isLinkableType(type)
+      ? (document.getElementById('entryContract').value || null)
+      : null;
 
     if (!type) return App.toast('请选择交易类型', 'error');
     if (!amount || amount <= 0) return App.toast('金额必须为有效正数', 'error');
@@ -314,7 +344,8 @@ const Entry = (() => {
         amount: signedAmount, type, unit,
         customer_id: customerId ? Number(customerId) : null,
         product_id: productId ? Number(productId) : null,
-        date, note, category
+        date, note, category,
+        contract_id: contractId ? Number(contractId) : null
       });
       await Storage.refreshCache();
       // 重置表单
@@ -429,10 +460,16 @@ const Entry = (() => {
         if (t.category) parts.push(t.category);
         if (t.note) parts.push(t.note);
         const opTime = t.created_at ? t.created_at.replace('T', ' ').substring(0, 16) : '';
+        const contractHtml = t.contract_display_name
+          ? `<span class="r-contract">📑 ${escapeHtml(t.contract_display_name)}</span>`
+          : (isLinkableType(t.type)
+              ? `<span class="r-nocontract">⚠ 该笔交易记录还未关联合同，请及时关联！${Auth.canEdit() ? `<button class="btn btn-warning btn-sm r-relink" onclick="Entry.relink(${t.id})">关联</button>` : ''}</span>`
+              : '');
         return `<div class="record-item">
           <div class="r-left">
             <div class="r-type">${escapeHtml(t.type)}<span class="r-unit">${escapeHtml(t.unit)}</span></div>
             <div class="r-date">${parts.map(escapeHtml).join(' · ')}${opTime ? '　<span class="r-opt">录入于 ' + opTime + '</span>' : ''}</div>
+            <div class="r-contract-line ${t.contract_display_name ? 'linked' : 'unlinked'}">${contractHtml}</div>
           </div>
           <div class="r-amt ${isPos ? 'pos' : 'neg'}">${isPos ? '+' : '−'}${Calculator.fmtMoney(Math.abs(t.amount))}</div>
           ${Auth.canEdit() ? `<button class="btn btn-secondary btn-sm r-edit" onclick="Entry.edit(${t.id})">编辑</button><button class="btn btn-danger btn-sm r-del" onclick="Entry.del(${t.id})">删</button>` : ''}
@@ -465,6 +502,8 @@ const Entry = (() => {
     const units = Storage.getUnitList();
     const customers = Storage.getCustomerOptions();
     const products = Storage.getProductOptions();
+    const wantDir = isIncome ? 'sale' : 'purchase';
+    const contracts = Storage.getContractsSync().filter(c => (c.direction || 'sale') === wantDir);
 
     const body = `
       <div class="form-group"><label class="form-label">交易类型 <span class="req">*</span></label>
@@ -479,6 +518,8 @@ const Entry = (() => {
         <select class="form-select" id="e-customer"><option value="">— 不关联 —</option>${customers.map(c => `<option value="${c.id}"${c.id === rec.customer_id ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
       <div class="form-group" id="e-prodGroup"><label class="form-label">商品 <span class="opt">(可选)</span></label>
         <select class="form-select" id="e-product"><option value="">— 不关联 —</option>${products.map(p => `<option value="${p.id}"${p.id === rec.product_id ? ' selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}</select></div>
+      <div class="form-group" id="e-contractGroup"><label class="form-label">关联合同 <span class="opt">(可选，${isIncome ? '销售' : '采购'}合同)</span></label>
+        <select class="form-select" id="e-contract"><option value="">— 不关联 —</option>${contracts.map(c => `<option value="${c.id}"${c.id === rec.contract_id ? ' selected' : ''}>${escapeHtml(c.display_name || ('#合同' + c.id))}</option>`).join('')}</select></div>
       <div class="form-group"><label class="form-label">日期 <span class="req">*</span></label>
         <input type="date" class="form-input" id="e-date" value="${rec.date || ''}"></div>
       <div class="form-group"><label class="form-label">备注</label>
@@ -494,12 +535,16 @@ const Entry = (() => {
       const category = cfg.cat ? (document.getElementById('e-category').value || null) : null;
       const customerId = cfg.customer ? (document.getElementById('e-customer').value || null) : null;
       const productId = cfg.product ? (document.getElementById('e-product').value || null) : null;
+      const contractId = (isLinkableType(type) && document.getElementById('e-contract'))
+        ? (document.getElementById('e-contract').value || null)
+        : null;
       const signedAmount = isIncome ? Math.abs(amount) : -Math.abs(amount);
       await API.put('/transactions/' + id, {
         amount: signedAmount, type, unit: document.getElementById('e-unit').value,
         customer_id: customerId ? Number(customerId) : null,
         product_id: productId ? Number(productId) : null,
-        date, note: document.getElementById('e-note').value, category
+        date, note: document.getElementById('e-note').value, category,
+        contract_id: contractId ? Number(contractId) : null
       });
       await Storage.refreshCache();
       renderRecords();
@@ -545,6 +590,35 @@ const Entry = (() => {
     }
   }
 
+  // 一键补关联：按方向 + 客户 + 日期相近推荐候选合同，选择一个即关联到该笔交易
+  async function relink(id) {
+    const rec = Storage.getTransactionsSync().find(t => t.id === id);
+    if (!rec) return App.toast('记录不存在', 'error');
+    // 兜底校验：非白名单类别不允许弹关联弹窗
+    if (!isLinkableType(rec.type)) return App.toast('该类别无需关联合同（仅材料采购/委托加工/现金支出/销售收入/现金收入需要）', 'error');
+    const isIncome = rec.amount > 0;
+    const dir = isIncome ? 'sale' : 'purchase';
+    try {
+      const q = new URLSearchParams({ direction: dir });
+      if (rec.customer_id) q.set('customer_id', rec.customer_id);
+      if (rec.date) q.set('date', rec.date);
+      const cands = await API.get('/contracts/suggest?' + q.toString());
+      const body = `<div class="setting-desc" style="margin-bottom:8px;">为该笔${isIncome ? '收入' : '支出'}记录推荐以下「${dir === 'sale' ? '销售' : '采购'}合同」，选择一个完成关联：</div>
+        <div class="relink-list">${cands.length ? cands.map(c => `<label class="relink-item"><input type="radio" name="relinkC" value="${c.id}"> <span>${escapeHtml(c.display_name)}</span></label>`).join('') : '<div class="empty-state">暂无候选合同，请先在「合同管理」创建对应合同</div>'}</div>`;
+      App.openModal('关联合同', body, async () => {
+        const sel = document.querySelector('input[name="relinkC"]:checked');
+        if (!sel) return App.toast('请选择一个合同', 'error');
+        await API.put('/transactions/' + id, { contract_id: Number(sel.value) });
+        await Storage.refreshCache();
+        renderRecords();
+        App.closeModal();
+        App.toast('已关联合同', 'success');
+      });
+    } catch (e) {
+      App.toast('获取候选合同失败：' + e.message, 'error');
+    }
+  }
+
   function bind() {
     document.getElementById('dirExpense').addEventListener('click', () => setDirection('expense'));
     document.getElementById('dirIncome').addEventListener('click', () => setDirection('income'));
@@ -587,5 +661,5 @@ const Entry = (() => {
   // 返回当前收支查询结果（供导出使用）
   function getQueryRows() { return lastQueryRows; }
 
-  return { render, renderAdd, renderQuery, renderRecords, bind, del, edit, getQueryRows };
+  return { render, renderAdd, renderQuery, renderRecords, bind, del, edit, relink, getQueryRows };
 })();

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>阿米巴经营数字助手</title>
 <link rel="icon" type="image/x-icon" href="images/favicon.ico?v=20260724c">
-<link rel="stylesheet" href="css/style.css?v=20260724c">
+<link rel="stylesheet" href="css/style.css?v=20260730c">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -79,7 +79,14 @@
         </div>
       </div>
 
-      <div class="nav-item" data-key="contract"><span class="ni-ic">📑</span><span class="ni-label">合同管理</span></div>
+      <div class="nav-group has-sub">
+        <div class="nav-item" data-page="contract" data-toggle="sub"><span class="ni-ic">📑</span><span class="ni-label">合同管理</span><span class="ni-caret">▸</span></div>
+        <div class="sub-list">
+          <div class="nav-sub" data-key="contract-add"><span class="ni-dot">•</span>合同录入</div>
+          <div class="nav-sub" data-key="contract-query"><span class="ni-dot">•</span>合同查询</div>
+        </div>
+      </div>
+      <div class="nav-item" data-key="service"><span class="ni-ic">🛎</span><span class="ni-label">服务管理</span></div>
       <div class="nav-item" data-key="inventory"><span class="ni-ic">📦</span><span class="ni-label">库存管理</span></div>
 
       <div class="nav-group has-sub">
@@ -102,6 +109,8 @@
       </div>
 
       <div class="nav-item admin-only" data-key="users"><span class="ni-ic">🔐</span><span class="ni-label">账号管理</span></div>
+
+      <div class="nav-item nav-doc" data-key="manual"><span class="ni-ic">📖</span><span class="ni-label">使用说明书</span></div>
     </nav>
   </aside>
 
@@ -111,7 +120,7 @@
       <div class="topbar-title" id="topbarTitle">经营看板</div>
       <div class="user-menu">
         <span class="user-name" id="userDisplayName">—</span>
-        <span class="user-role" id="userRoleTag">—</span>
+        <span class="user-company" id="userCompanyName">—</span>
         <button class="btn btn-secondary btn-sm" id="logoutBtn">退出</button>
       </div>
     </header>
@@ -166,7 +175,7 @@
               <div class="metric-card"><div class="m-name">现金收入</div><div class="m-value positive" id="m-cash">¥ 0</div><div class="m-sub">本期现金</div></div>
               <div class="metric-card"><div class="m-name">其他收入</div><div class="m-value positive" id="m-other">¥ 0</div><div class="m-sub">利息/补贴等</div></div>
               <div class="metric-card"><div class="m-name">总收入</div><div class="m-value positive" id="m-total-income">¥ 0</div><div class="m-sub">销售+现金+其他</div></div>
-              <div class="metric-card"><div class="m-name">应收款</div><div class="m-value positive" id="m-receivable">¥ 0</div><div class="m-sub">销售-现金</div></div>
+              <div class="metric-card"><div class="m-name">应收款</div><div class="m-value recv-amt" id="m-receivable">¥ 0</div><div class="m-sub">销售-现金</div></div>
             </div>
           </div>
           <div class="sub-group">
@@ -343,25 +352,71 @@
             </span>
           </div>
         </div>
-        <div class="metric-grid row3">
-          <div class="metric-card highlight"><div class="m-name">总销售额</div><div class="m-value" id="prodTotalSale">¥ 0</div></div>
-          <div class="metric-card"><div class="m-name">平均毛利率</div><div class="m-value" id="prodAvgGm">0%</div></div>
-          <div class="metric-card"><div class="m-name">库存总价值</div><div class="m-value" id="prodTotalInv">¥ 0</div></div>
+        <div class="ana-tab-bar" id="prodTabs">
+          <div class="ana-tab active" data-tab="income">
+            <div class="ana-tab-icon">📈</div>
+            <div class="ana-tab-title">收入类（销售）</div>
+            <div class="ana-tab-sub">销售总额 / 毛利率 / TOP5</div>
+          </div>
+          <div class="ana-tab" data-tab="purchase">
+            <div class="ana-tab-icon">📉</div>
+            <div class="ana-tab-title">支出类（采购）</div>
+            <div class="ana-tab-sub">采购总额 / TOP5</div>
+          </div>
         </div>
-        <div class="ana-card">
-          <div class="ana-card-title">Top 5 销售额</div>
-          <div id="prodTopBars"></div>
+
+        <!-- 收入类 -->
+        <div class="prod-tab-wrap" id="prodIncomeWrap">
+          <div class="metric-grid row3">
+            <div class="metric-card"><div class="m-name">销售总数量</div><div class="m-value" id="piQty">0</div></div>
+            <div class="metric-card"><div class="m-name">销售总金额</div><div class="m-value" id="piSale">¥ 0</div></div>
+            <div class="metric-card"><div class="m-name">平均毛利率</div><div class="m-value" id="piGm">0%</div></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">销售数量 TOP5</div>
+            <div class="table-wrap"><table class="data-table" id="piQtyTop"></table></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">销售金额 TOP5</div>
+            <div class="table-wrap"><table class="data-table" id="piAmtTop"></table></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">实际销售价变动 TOP5</div>
+            <div class="table-wrap"><table class="data-table" id="piPriceTop"></table></div>
+          </div>
         </div>
-        <div class="ana-card">
-          <div class="ana-card-title">商品明细</div>
-          <div class="table-wrap"><table class="data-table" id="prodTable"></table></div>
+
+        <!-- 支出类 -->
+        <div class="prod-tab-wrap" id="prodPurchaseWrap" style="display:none;">
+          <div class="metric-grid row2">
+            <div class="metric-card"><div class="m-name">采购总数量</div><div class="m-value" id="ppQty">0</div></div>
+            <div class="metric-card"><div class="m-name">采购总成本</div><div class="m-value" id="ppCost">¥ 0</div></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">采购数量 TOP5</div>
+            <div class="table-wrap"><table class="data-table" id="ppQtyTop"></table></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">采购成本 TOP5</div>
+            <div class="table-wrap"><table class="data-table" id="ppCostTop"></table></div>
+          </div>
+          <div class="ana-card">
+            <div class="ana-card-title">实际采购价变动 TOP5</div>
+            <div class="table-wrap"><table class="data-table" id="ppPriceTop"></table></div>
+          </div>
+        </div>
+
+        <!-- 商品明细：跨 tab 固定显示（销售+采购合并） -->
+        <div class="ana-card" id="prodDetailCard" style="margin-top:18px;">
+          <div class="ana-card-title">商品明细 <span class="text-muted" style="font-size:12px;font-weight:normal;margin-left:6px;">销售总额 / 采购总成本 / 销售数量 / 采购数量 / 毛利率</span></div>
+          <div class="table-wrap"><table class="data-table" id="productDetailTable"></table></div>
         </div>
       </section>
 
       <!-- 6.3 合同分析 -->
       <section class="page-section" id="page-analysis-contract">
         <div class="page-toolbar">
-          <div><div class="page-title">合同分析</div><div class="page-subtitle">合同金额、已回款、执行率；P1 升级为按合同号严格聚合</div></div>
+          <div><div class="page-title">合同分析</div><div class="page-subtitle">合同金额、已回款、执行率；按合同名归集（日期-客户-首项明细等）</div></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <select class="form-select ana-unit" style="width:auto;"><option>全部单元</option></select>
             <select class="form-select ana-period" style="width:auto;"></select>
@@ -496,6 +551,10 @@
           <div class="form-group">
             <label class="form-label">⑤ 日期</label>
             <input type="date" class="form-input" id="entryDate">
+          </div>
+          <div class="form-group" id="entryContractGroup">
+            <label class="form-label">关联合同 <span class="opt">(可选，收入选销售合同 / 支出选采购合同)</span></label>
+            <select class="form-select" id="entryContract"><option value="">— 不关联 —</option></select>
           </div>
           <div class="form-group">
             <label class="form-label">备注</label>
@@ -679,20 +738,118 @@
         <div class="table-wrap"><table class="data-table" id="productTable"></table></div>
       </section>
 
-      <!-- ===== 合同管理 ===== -->
-      <section class="page-section" id="page-contract">
-        <div class="page-title">合同管理</div>
+      <!-- ===== 合同录入（独立页面，不再使用弹框） ===== -->
+      <section class="page-section" id="page-contract-add">
+        <div class="page-toolbar">
+          <div>
+            <div class="page-title" id="contractAddTitle">合同录入</div>
+            <div class="page-subtitle">在此录入新的销售 / 采购合同。带明细的合同会自动按「日期-客户-首项明细等」生成合同名。</div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-secondary btn-sm" onclick="Business.clearContractForm()">清空表单</button>
+            <button class="btn btn-primary" onclick="Business.saveContract()">保存合同</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">基本信息</div>
+          <div class="form-grid two-col">
+            <div class="form-group">
+              <label class="form-label">客户 <span class="req">*</span></label>
+              <select class="form-select" id="m-customer_id"></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">合同方向 <span class="req">*</span></label>
+              <select class="form-select" id="m-direction">
+                <option value="sale">销售（我方卖出商品）</option>
+                <option value="purchase">采购（我方买入商品）</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">签订日期</label>
+              <input type="date" class="form-input" id="m-date">
+            </div>
+            <div class="form-group">
+              <label class="form-label">状态</label>
+              <select class="form-select" id="m-status">
+                <option>进行中</option>
+                <option>已完成</option>
+                <option>已终止</option>
+              </select>
+            </div>
+            <div class="form-group" style="grid-column:1/-1;">
+              <label class="form-label">备注</label>
+              <textarea class="form-input" id="m-note" rows="2" placeholder="可选：合同补充说明、对方联系人、付款条款等"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="card ci-card">
+          <div class="card-title">商品明细</div>
+          <div class="sub-hint">销售合同填卖出商品 / 采购合同填买入商品，商品名支持模糊搜索。</div>
+          <div class="sub-row sub-row-head sub-row-item">
+            <div class="ci-label">商品</div>
+            <div class="ci-label">数量</div>
+            <div class="ci-label">实际交易金额</div>
+            <div class="ci-label ci-label-action">操作</div>
+          </div>
+          <div id="contractItems"></div>
+          <button type="button" class="btn btn-primary ci-add-btn" onclick="Business.addContractItemRow()"><span class="ci-add-ic">+</span>添加商品明细</button>
+        </div>
+
+        <div class="card ci-card">
+          <div class="card-title">服务费明细</div>
+          <div class="sub-hint">从「服务管理」中选择服务，填写该合同实际发生的服务费用。</div>
+          <div class="sub-row sub-row-head sub-row-svc">
+            <div class="ci-label">服务（从服务管理选）</div>
+            <div class="ci-label">参考费用（¥）</div>
+            <div class="ci-label">实际服务费用（¥）</div>
+            <div class="ci-label ci-label-action">操作</div>
+          </div>
+          <div id="contractSvcs"></div>
+          <button type="button" class="btn btn-primary ci-add-btn" onclick="Business.addContractSvcRow()"><span class="ci-add-ic">+</span>添加服务费</button>
+        </div>
+
+        <div class="form-actions">
+          <button class="btn btn-secondary" onclick="Business.clearContractForm()">清空表单</button>
+          <button class="btn btn-primary btn-lg" onclick="Business.saveContract()">保存合同</button>
+        </div>
+      </section>
+
+      <!-- ===== 合同查询（独立页面） ===== -->
+      <section class="page-section" id="page-contract-query">
+        <div class="page-toolbar">
+          <div>
+            <div class="page-title">合同查询</div>
+            <div class="page-subtitle">查看已录入的合同，编辑/删除。点击「编辑」会跳到合同录入页。</div>
+          </div>
+        </div>
         <div class="metric-grid row3">
           <div class="metric-card primary"><div class="m-name">合同总数</div><div class="m-value" id="contractCount">0</div></div>
           <div class="metric-card"><div class="m-name">合同总金额</div><div class="m-value" id="contractAmount">¥ 0</div></div>
           <div class="metric-card"><div class="m-name">进行中</div><div class="m-value positive" id="contractActive">0</div></div>
         </div>
         <div class="query-toolbar">
-          <input type="text" class="form-input" id="contractQCustomer" placeholder="客户名称" style="width:180px;">
+          <input type="text" class="form-input" id="contractQCustomer" placeholder="客户名称" style="width:160px;">
+          <select class="form-select" id="contractQDirection" style="width:120px;">
+            <option value="">全部方向</option>
+            <option value="sale">销售</option>
+            <option value="purchase">采购</option>
+          </select>
           <button class="btn btn-secondary btn-sm" id="contractResetBtn">重置</button>
-          <button class="btn btn-primary btn-sm" onclick="Business.openContractModal()">+ 添加合同</button>
         </div>
-        <div class="table-wrap"><table class="data-table" id="contractTable"></table></div>
+        <div class="table-wrap"><table class="data-table" id="contractQueryTable"></table></div>
+      </section>
+
+      <!-- ===== 服务管理 ===== -->
+      <section class="page-section" id="page-service">
+        <div class="page-title">服务管理</div>
+        <div class="setting-desc" style="margin-bottom:8px;">管理合同可关联的「服务费」项目（如染色、设计、物流）。<b>与「杂费类别设置」是完全独立的两套数据，请勿混用。</b></div>
+        <div class="query-toolbar">
+          <input type="text" class="form-input" id="svcQName" placeholder="服务名称" style="width:180px;">
+          <button class="btn btn-secondary btn-sm" id="svcResetBtn">重置</button>
+          <button class="btn btn-primary btn-sm" id="addServiceBtn" onclick="Business.openServiceModal()">+ 添加服务</button>
+        </div>
+        <div class="table-wrap"><table class="data-table" id="serviceTable"></table></div>
       </section>
 
       <!-- ===== 库存管理 ===== -->
@@ -858,6 +1015,9 @@
         <div class="table-wrap"><table class="data-table" id="userTable"></table></div>
       </section>
 
+      <!-- ===== 使用说明书 ===== -->
+      <section class="page-section" id="page-manual"></section>
+
     </main>
   </div>
 </div>
@@ -900,8 +1060,9 @@
 <script src="js/settings.js?v=20260722a"></script>
 <script src="js/users.js?v=20260722a"></script>
 <script src="js/export.js?v=20260722a"></script>
-<script src="js/analysis.js?v=20260724c"></script>
-<script src="js/app.js?v=20260724b"></script>
+      <script src="js/analysis.js?v=20260724c"></script>
+      <script src="js/manual.js?v=20260730b"></script>
+      <script src="js/app.js?v=20260724b"></script>
 
 <!-- ========== AI 对话面板 ========== -->
 <div id="aiChatToggle" class="ai-chat-toggle" title="AI 助手">

@@ -15,6 +15,15 @@ const hasCloudCreds = !!(
   process.env.TENCENTCLOUD_SECRETID &&
   process.env.TENCENTCLOUD_SECRETKEY
 );
+
+// 若显式配置了外部 PG 地址（非内置模板占位），一律走 pg 原生直连。
+// 这样 SCF Web 函数与云托管容器都能复用已开启公网访问的 PostgreSQL，
+// 不再强依赖 @cloudbase/manager-node（executePGSql 网关路径），部署包可大幅瘦身。
+const DIRECT_PG = !!(
+  process.env.PG_HOST &&
+  process.env.PG_HOST !== '{{envId}}.pg.rdb.cloud.tencent.com' &&
+  process.env.PG_HOST.indexOf('rdb.cloud.tencent.com') === -1
+);
 const ENV = process.env.SCF_NAMESPACE || process.env.TCB_ENV || 'amiba-d3gk34ae899822073';
 
 // ===== 初始化状态（供 /api/health 暴露，无需 CLS 也能观测）=====
@@ -71,7 +80,7 @@ const DEFAULT_EXPENSE_TYPES = [
   ['材料采购', 'expense', true,  true,  ''],
   ['委托加工', 'expense', true,  false, 'processing'],
   ['杂费支出', 'expense', false, false, 'misc'],
-  ['税金',     'expense', true,  true,  ''],
+  ['税金',     'expense', false, false, ''],  // 税金不需要关联商品和客户（批14）
   ['现金支出', 'expense', true,  true,  ''],
   ['销售收入', 'income',  true,  true,  ''],
   ['现金收入', 'income',  true,  true,  ''],
@@ -175,10 +184,14 @@ function bind(text, params) {
 }
 
 async function query(text, params) {
+<<<<<<< HEAD
   // 优先使用原生 pg 连接（显式配置了 DATABASE_URL / PG_* 时）。
   // 注：Cloud Run 注入了 TENCENTCLOUD_* 临时密钥，但 manager-node 的 executePGSql
   // 在云托管网络下会挂起，因此只要配置了原生 PG 连接就走原生驱动。
   if (!hasNativePgConfig && (cloudApp || hasCloudCreds)) {
+=======
+  if (!DIRECT_PG && (cloudApp || hasCloudCreds)) {
+>>>>>>> 06808cad500a2bba2f114734087e2fb2a28c4f38
     const res = await cloudQuery(bind(text, params));
     return adapt(res);
   }
@@ -191,7 +204,7 @@ async function query(text, params) {
 // 云端模式自动拆为两步：先 INSERT（去掉 RETURNING），再 SELECT 最新 id。
 // 本地 pg 模式行为不变，透传原始 SQL。
 async function insertReturning(text, params) {
-  if (cloudApp || hasCloudCreds) {
+  if (!DIRECT_PG && (cloudApp || hasCloudCreds)) {
     const insertPart = text.replace(/\s+RETURNING\s+.*$/i, '');
     await cloudQuery(bind(insertPart, params));
     const tableMatch = insertPart.match(/INTO\s+(\w+)/i);
@@ -220,6 +233,7 @@ const INIT_TABLES_SQL = `
     password_hash TEXT NOT NULL,
     display_name TEXT DEFAULT '',
     role TEXT DEFAULT 'viewer',
+    company_name TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ DEFAULT NOW()
   );
 
@@ -356,6 +370,34 @@ const INIT_TABLES_SQL = `
     parent_id INTEGER,
     owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     UNIQUE(owner_id, name, direction)
+  );
+
+  CREATE TABLE IF NOT EXISTS services (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    reference_cost REAL DEFAULT 0,
+    note TEXT DEFAULT '',
+    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  CREATE TABLE IF NOT EXISTS contract_items (
+    id SERIAL PRIMARY KEY,
+    contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
+    product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+    quantity REAL DEFAULT 0,
+    actual_price REAL DEFAULT 0,
+    amount REAL DEFAULT 0,
+    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS contract_services (
+    id SERIAL PRIMARY KEY,
+    contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
+    service_id INTEGER REFERENCES services(id) ON DELETE SET NULL,
+    service_name TEXT DEFAULT '',
+    amount REAL DEFAULT 0,
+    owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE
   );
 `;
 
@@ -561,6 +603,68 @@ async function ensureExpenseTypesForAll() {
   }
 }
 
+// 批14 迁移：把所有账号的「税金」联动规则改为不关联客户/商品（前端录入页隐藏这 2 个字段）。
+// 幂等：DB 默认已为 false；这里只把老 seed 的 true 行改回 false。
+async function migrateTaxExpenseTypeLinkage() {
+  try {
+    const r = await query(
+      "UPDATE expense_types SET link_customer=FALSE, link_product=FALSE WHERE name='税金' AND direction='expense' AND (link_customer=TRUE OR link_product=TRUE) RETURNING id"
+    );
+    const n = r.rows ? r.rows.length : 0;
+    if (n > 0) console.log(`[DB] 税金联动规则迁移：修正 ${n} 条`);
+  } catch (e) {
+    console.error('[DB] migrateTaxExpenseTypeLinkage 失败:', e.message);
+  }
+}
+
+// 老库迁移：users 表补 company_name 列（账号绑定唯一企业），并为已有 admin 补默认企业名
+async function ensureUserCompanyNameColumn() {
+  try {
+    await query("ALTER TABLE users ADD COLUMN company_name TEXT NOT NULL DEFAULT ''");
+  } catch (e) {
+    if (!/already exists/i.test(e.message || '')) throw e;
+  }
+  // 现有 admin 超管账号补默认企业名（幂等：已填的不动）
+  try {
+    await query("UPDATE users SET company_name='系统默认企业' WHERE username='admin' AND company_name=''");
+  } catch (e) { throw e; }
+}
+
+// 合同/服务升级：新增 services / contract_items / contract_services 三表；
+// transactions 加 contract_id（收支↔合同关联，批4 使用）；
+// contracts 加 date / direction（签订日 / 销售采购方向）
+async function ensureContractUpgradeColumns() {
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS services (
+      id SERIAL PRIMARY KEY, name TEXT NOT NULL, reference_cost REAL DEFAULT 0, note TEXT DEFAULT '',
+      owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE, created_at TIMESTAMPTZ DEFAULT NOW())`);
+  } catch (e) { console.error('[DB] services 建表跳过:', e.message); }
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS contract_items (
+      id SERIAL PRIMARY KEY, contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
+      product_id INTEGER REFERENCES products(id) ON DELETE SET NULL, quantity REAL DEFAULT 0,
+      actual_price REAL DEFAULT 0, amount REAL DEFAULT 0, owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE)`);
+  } catch (e) { console.error('[DB] contract_items 建表跳过:', e.message); }
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS contract_services (
+      id SERIAL PRIMARY KEY, contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
+      service_id INTEGER REFERENCES services(id) ON DELETE SET NULL, service_name TEXT DEFAULT '',
+      amount REAL DEFAULT 0, owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE)`);
+  } catch (e) { console.error('[DB] contract_services 建表跳过:', e.message); }
+  // transactions 加 contract_id（收支关联合同，批4 录入时使用）
+  try {
+    await query('ALTER TABLE transactions ADD COLUMN contract_id INTEGER REFERENCES contracts(id) ON DELETE SET NULL');
+  } catch (e) { if (!/already exists/i.test(e.message || '')) throw e; }
+  // contracts 加 date（签订日，用于拼接合同名）/ direction（'sale' 销售 | 'purchase' 采购）
+  try { await query("ALTER TABLE contracts ADD COLUMN date TEXT DEFAULT ''"); }
+  catch (e) { if (!/already exists/i.test(e.message || '')) throw e; }
+  try { await query("ALTER TABLE contracts ADD COLUMN direction TEXT DEFAULT 'sale'"); }
+  catch (e) { if (!/already exists/i.test(e.message || '')) throw e; }
+  // 老合同无 date：用 start_date 兜底，保证拼接名至少含日期+客户
+  try { await query("UPDATE contracts SET date=start_date WHERE date IS NULL OR date=''"); }
+  catch (e) { console.error('[DB] contracts.date 兜底跳过:', e.message); }
+}
+
 // 修复历史迁移造成的孤立归属：owner_id 指向不存在用户的业务数据，统一归属到 admin
 async function fixOrphanedOwners() {
   const admin = await queryOne("SELECT id FROM users WHERE username='admin'");
@@ -688,6 +792,27 @@ async function seedForUser(uid, mode) {
   for (const [no, cid, amt, st, sd, ed] of contracts) {
     await query('INSERT INTO contracts(contract_no,customer_id,amount,status,start_date,end_date,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7)', [no, cid, amt, st, sd, ed, uid]);
   }
+  // 示例服务（与杂费类别 expense_items 完全独立的两套数据，勿混用）
+  const svcSeed = [['染色服务', 2.5, '按米计费的染色加工'], ['设计打样', 60, '款式设计打样'], ['物流配送', 8, '同城配送费']];
+  const svcIds = [];
+  for (const [nm, rc, nt] of svcSeed) {
+    const r = await insertReturning('INSERT INTO services(name,reference_cost,note,owner_id) VALUES($1,$2,$3,$4) RETURNING id', [nm, rc, nt, uid]);
+    svcIds.push(r.rows[0].id);
+  }
+  // 让首个合同成为"销售合同"演示：带商品明细 + 服务费明细，金额由明细聚合
+  const firstC = await queryOne('SELECT id FROM contracts WHERE owner_id=$1 ORDER BY id ASC LIMIT 1', [uid]);
+  if (firstC) {
+    await query("UPDATE contracts SET direction='sale', date=start_date, contract_no='' WHERE id=$1", [firstC.id]);
+    await query(
+      'INSERT INTO contract_items(contract_id,product_id,quantity,actual_price,amount,owner_id) SELECT $1, id, 100, 69, 6900, $2 FROM products WHERE owner_id=$2 AND name=$3 LIMIT 1',
+      [firstC.id, uid, '纯棉T恤']
+    );
+    await query('INSERT INTO contract_services(contract_id,service_id,service_name,amount,owner_id) VALUES($1,$2,$3,$4,$5)',
+      [firstC.id, svcIds[0], '染色服务', 250, uid]);
+    const sumI = await queryOne('SELECT COALESCE(SUM(amount),0) AS s FROM contract_items WHERE contract_id=$1 AND owner_id=$2', [firstC.id, uid]);
+    const sumS = await queryOne('SELECT COALESCE(SUM(amount),0) AS s FROM contract_services WHERE contract_id=$1 AND owner_id=$2', [firstC.id, uid]);
+    await query('UPDATE contracts SET amount=$1 WHERE id=$2', [Number(sumI.s || 0) + Number(sumS.s || 0), firstC.id]);
+  }
   const employees = [['张师傅', '裁剪工', 35, '2024-03-01'], ['李师傅', '缝纫工', 30, '2024-05-15'], ['王小妹', '包装工', 25, '2025-01-10'], ['赵主管', '管理员', 45, '2023-06-01']];
   const empIds = [];
   for (const [name, pos, rate, jd] of employees) {
@@ -759,6 +884,15 @@ async function init() {
 
   // 3.7) 确保每个账号都拥有收支类型预设（费用类型，可配置联动/启停）
   await ensureExpenseTypesForAll();
+
+  // 3.7.1) 批14 迁移：税金类型不关联客户/商品（老账号修正）
+  await migrateTaxExpenseTypeLinkage();
+
+  // 3.8) 老库 users 表补 company_name 列（账号绑定唯一企业）
+  await ensureUserCompanyNameColumn();
+
+  // 3.9) 合同/服务升级（services / contract_items / contract_services 三表 + transactions.contract_id + contracts.date/direction）
+  await ensureContractUpgradeColumns();
 
   // 4) 首次启动：无用户则创建 admin/editor 并各自生成完整示例
   const r = await query('SELECT COUNT(*) AS c FROM users');

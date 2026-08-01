@@ -1,6 +1,5 @@
+nm/
 node_modules/
-deps.zip
-test_server.js
 .git/
 .gitignore
 .vscode/
@@ -8,7 +7,7 @@ test_server.js
 *.log
 npm-debug.log*
 .env
-.env.local
+.env.*
 database.sqlite
 database.sqlite-journal
 database.sqlite-wal
@@ -16,5 +15,4 @@ database.sqlite-shm
 data/
 docs/
 *.md
-.cloudbaseignore
 .codebuddy/

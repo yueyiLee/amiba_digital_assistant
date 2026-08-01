@@ -322,7 +322,7 @@ const Analysis = (() => {
           <td>${escapeHtml(r.type)}</td>
           <td class="amt pos">${money(r.sale)}</td>
           <td class="amt pos">${money(r.cash)}</td>
-          <td class="amt ${r.recv > 0 ? 'neg' : ''}">${money(r.recv)}</td>
+          <td class="amt ${r.recv > 0 ? 'recv-amt' : ''}">${money(r.recv)}</td>
           <td>${r.lastDate || '—'}</td>
           <td>${stat}</td>
         </tr>`;
@@ -353,45 +353,113 @@ const Analysis = (() => {
     });
     return Object.values(byId).filter(r => r.sale > 0 || r.invValue > 0).sort((a, b) => b.sale - a.sale);
   }
-  function renderProduct() {
-    const rows = buildProductMetrics();
-    const totalSale = rows.reduce((s, r) => s + r.sale, 0);
-    const totalInv = rows.reduce((s, r) => s + r.invValue, 0);
-    $('prodTotalSale').textContent = money(totalSale);
-    $('prodTotalInv').textContent = money(totalInv);
-    $('prodAvgGm').textContent = totalSale > 0
-      ? ((totalSale - rows.reduce((s, r) => s + r.cost, 0)) / totalSale * 100).toFixed(1) + '%'
-      : '0%';
-
-    // Top 5 销售
-    const top = rows.slice(0, 5);
-    const max = Math.max(1, ...top.map(r => r.sale));
-    $('prodTopBars').innerHTML = top.map(r => `
-      <div class="ana-bar-row">
-        <div class="ana-bar-label">${escapeHtml(r.name)}</div>
-        <div class="ana-bar-track"><div class="ana-bar-fill sale" style="width:${(r.sale / max * 100).toFixed(0)}%"></div></div>
-        <div class="ana-bar-val">${money(r.sale)}</div>
-      </div>`).join('') || '<div class="empty-state">暂无商品销售数据</div>';
-
-    // 明细表
-    const marginTh = getProductMarginThreshold();
-    const showZeroStock = hasZeroStockRule();
-    $('prodTable').innerHTML = `<thead><tr><th>商品</th><th>分类</th><th>销售额</th><th>成本</th><th>毛利率</th><th>库存量</th><th>库存价值</th><th>状态</th></tr></thead>
-      <tbody>${rows.map(r => {
-        const stat = r.gm < marginTh && r.sale > 0 ? '<span class="badge red">毛利跌破</span>'
-                    : r.qty === 0 && r.sale > 0 && showZeroStock ? '<span class="badge yellow">零库存</span>'
-                    : '<span class="badge gray">正常</span>';
-        return `<tr data-anchor="product:${r.id}">
+  // ========== 5. 商品分析（收入类/支出类 双 tab，数据来自后端聚合接口） ==========
+  let prodTab = 'income';
+  async function renderProduct() {
+    const range = getRange();
+    const qs = 'startDate=' + encodeURIComponent(range.start) + '&endDate=' + encodeURIComponent(range.end);
+    try {
+      const [sales, purchase] = await Promise.all([
+        API.get('/analysis/product-sales?' + qs),
+        API.get('/analysis/product-purchase?' + qs)
+      ]);
+      // 收入类 KPI
+      $('piQty').textContent = (sales.total_qty || 0).toLocaleString();
+      $('piSale').textContent = money(sales.total_sale || 0);
+      $('piGm').textContent = ((sales.avg_gm || 0) * 100).toFixed(1) + '%';
+      renderProdTopTable('piQtyTop', sales.by_qty, '销售数量需通过「合同录入 → 商品明细」维护', true);
+      renderProdTopTable('piAmtTop', sales.by_amount, null, true);
+      renderPriceTable('piPriceTop', sales.price_change, '需同一商品在多笔合同中有成交价');
+      // 支出类 KPI
+      $('ppQty').textContent = (purchase.total_qty || 0).toLocaleString();
+      $('ppCost').textContent = money(purchase.total_cost || 0);
+      renderProdTopTable('ppQtyTop', purchase.by_qty, '采购数量需通过「合同录入 → 商品明细」维护', false);
+      renderProdTopTable('ppCostTop', purchase.by_amount, null, false);
+      renderPriceTable('ppPriceTop', purchase.price_change, '需同一商品在多笔合同中有成交价');
+      // 商品明细：跨 tab 固定显示（销售+采购合并，列：商品/销售总额/采购总成本/销售数量/采购数量/毛利率）
+      renderProductDetail(sales, purchase);
+    } catch (e) {
+      App.toast('商品分析加载失败：' + e.message, 'error');
+    }
+  }
+  // 商品明细：把 sales 和 purchase 按 product_id 合并到一行；总成本来自采购，gm=(sale-cost)/sale
+  function renderProductDetail(sales, purchase) {
+    const el = $('productDetailTable');
+    if (!el) return;
+    // 用 Map 合并：key=product_id（缺失名时用 product_name）；优先以 sales 为准
+    const byId = new Map();
+    const addRow = (r, kind) => {
+      if (!r) return;
+      const key = String(r.product_id != null ? r.product_id : ('name:' + (r.product_name || '')));
+      if (!byId.has(key)) byId.set(key, { id: r.product_id, name: r.product_name || '未命名商品', sale_amt: 0, cost_amt: 0, sale_qty: 0, purchase_qty: 0 });
+      const row = byId.get(key);
+      if (kind === 'sale')   { row.sale_amt    += num0(r.total_amount); row.sale_qty    += num0(r.total_qty); }
+      if (kind === 'purchase'){ row.cost_amt    += num0(r.total_amount); row.purchase_qty += num0(r.total_qty); }
+      // 名兜底：销售侧有真名时覆盖
+      if (kind === 'sale' && r.product_name) row.name = r.product_name;
+    };
+    (sales.by_amount || []).forEach(r => addRow(r, 'sale'));
+    (sales.by_qty || []).forEach(r => addRow(r, 'sale'));
+    (purchase.by_amount || []).forEach(r => addRow(r, 'purchase'));
+    (purchase.by_qty || []).forEach(r => addRow(r, 'purchase'));
+    // 采购侧常常用 id 合并（如果只有 sale/purchase 各自 key 不重合，就用 name 兜底）
+    const rows = Array.from(byId.values())
+      .filter(r => r.sale_amt > 0 || r.cost_amt > 0 || r.sale_qty > 0 || r.purchase_qty > 0)
+      .map(r => ({ ...r, gm: r.sale_amt > 0 ? (r.sale_amt - r.cost_amt) / r.sale_amt : 0 }))
+      .sort((a, b) => b.sale_amt - a.sale_amt);
+    if (rows.length === 0) {
+      el.innerHTML = '<tbody><tr><td class="empty-state" colspan="6">该时段内还没有任何商品销售/采购明细</td></tr></tbody>';
+      return;
+    }
+    el.innerHTML = `<thead><tr><th>商品</th><th style="text-align:right;">销售总额</th><th style="text-align:right;">采购总成本</th><th style="text-align:right;">销售数量</th><th style="text-align:right;">采购数量</th><th style="text-align:right;">毛利率</th></tr></thead>
+      <tbody>${rows.map(r => `
+        <tr data-anchor="product:${r.id || ''}">
           <td>${escapeHtml(r.name)}</td>
-          <td>${escapeHtml(r.category)}</td>
-          <td class="amt pos">${money(r.sale)}</td>
-          <td class="amt neg">${money(r.cost)}</td>
-          <td>${(r.gm * 100).toFixed(1)}%</td>
-          <td>${r.qty}</td>
-          <td class="amt">${money(r.invValue)}</td>
-          <td>${stat}</td>
+          <td class="amt pos" style="text-align:right;">${money(r.sale_amt)}</td>
+          <td class="amt neg" style="text-align:right;">${money(r.cost_amt)}</td>
+          <td style="text-align:right;">${(r.sale_qty || 0).toLocaleString()}</td>
+          <td style="text-align:right;">${(r.purchase_qty || 0).toLocaleString()}</td>
+          <td style="text-align:right;${r.sale_amt > 0 ? '' : 'color:#94a3b8;'}">${r.sale_amt > 0 ? (r.gm * 100).toFixed(1) + '%' : '—'}</td>
+        </tr>`).join('')}</tbody>`;
+  }
+  // 数量/金额 TOP5 表格（销售 tab 显示毛利率，采购 tab 不显示毛利率列）
+  function renderProdTopTable(tableId, rows, emptyHint, showGm) {
+    const el = $(tableId);
+    if (!el) return;
+    if (!rows || rows.length === 0) {
+      const hint = emptyHint || '暂无数据';
+      const colspan = showGm ? 4 : 3;
+      el.innerHTML = `<tbody><tr><td class="empty-state" colspan="${colspan}">${escapeHtml(hint)}</td></tr></tbody>`;
+      return;
+    }
+    const gmTh = showGm ? '<th>毛利率</th>' : '';
+    el.innerHTML = `<thead><tr><th>商品</th><th>数量</th><th>金额</th>${gmTh}</tr></thead>
+      <tbody>${rows.map(r => {
+        const gmTd = showGm ? `<td>${( (r.gm || 0) * 100 ).toFixed(1)}%</td>` : '';
+        return `<tr>
+          <td>${escapeHtml(r.product_name || '未命名商品')}</td>
+          <td>${r.total_qty || 0}</td>
+          <td class="amt">${money(r.total_amount || 0)}</td>
+          ${gmTd}
         </tr>`;
-      }).join('') || '<tr><td colspan="8" class="empty-state">暂无商品数据</td></tr>'}</tbody>`;
+      }).join('')}</tbody>`;
+  }
+  // 实际价变动 TOP5 表格
+  function renderPriceTable(tableId, rows, emptyHint) {
+    const el = $(tableId);
+    if (!el) return;
+    if (!rows || rows.length === 0) {
+      const hint = emptyHint || '暂无价格变动数据';
+      el.innerHTML = `<tbody><tr><td class="empty-state" colspan="4">${escapeHtml(hint)}</td></tr></tbody>`;
+      return;
+    }
+    el.innerHTML = `<thead><tr><th>商品</th><th>最低价 → 最高价</th><th>变动幅度</th><th>样本数</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td>${escapeHtml(r.product_name || '未命名商品')}</td>
+        <td>${money(r.min || 0)} → ${money(r.max || 0)}</td>
+        <td class="amt ${r.change > 0 ? 'pos' : 'neg'}">${((r.change || 0) * 100).toFixed(1)}%</td>
+        <td>${r.samples || 0}</td>
+      </tr>`).join('')}</tbody>`;
   }
 
   // ========== 6. 合同分析（简化版：按客户聚合） ==========
@@ -409,7 +477,7 @@ const Analysis = (() => {
       const cash = cashByCust[co.customer_id] || 0;
       const ratio = co.amount > 0 ? Math.min(1, cash / co.amount) : 0;
       return {
-        id: co.id, no: co.contract_no, customer: c ? c.name : '未关联',
+        id: co.id, no: co.contract_no, name: co.display_name || ('#合同' + co.id), customer: c ? c.name : '未关联',
         amount: num0(co.amount), cash, remain: Math.max(0, num0(co.amount) - cash), ratio,
         status: co.status, start: co.start_date, end: co.end_date
       };
@@ -423,13 +491,13 @@ const Analysis = (() => {
     $('contractTotalCash').textContent = money(totalCash);
     $('contractTotalRemain').textContent = money(Math.max(0, totalAmt - totalCash));
 
-    $('contractTable').innerHTML = `<thead><tr><th>合同号</th><th>客户</th><th>合同金额</th><th>已回款</th><th>未回款</th><th>执行率</th><th>状态</th><th>起止</th></tr></thead>
+    $('contractTable').innerHTML = `<thead><tr><th>合同名</th><th>客户</th><th>合同金额</th><th>已回款</th><th>未回款</th><th>执行率</th><th>状态</th><th>起止</th></tr></thead>
       <tbody>${rows.map(r => {
         const stat = r.ratio < 0.3 && r.amount > 0 ? '<span class="badge red">回款滞后</span>'
                     : r.ratio < 0.7 ? '<span class="badge yellow">执行中</span>'
                     : '<span class="badge green">健康</span>';
         return `<tr data-anchor="contract:${r.id}">
-          <td>${escapeHtml(r.no)}</td>
+          <td>${escapeHtml(r.name)}</td>
           <td>${escapeHtml(r.customer)}</td>
           <td class="amt pos">${money(r.amount)}</td>
           <td class="amt pos">${money(r.cash)}</td>
@@ -620,6 +688,15 @@ const Analysis = (() => {
     $('anaAdded').textContent = money(m.addedValue);
     $('anaUnitAdded').textContent = Currency.fmtRate(m.unitAddedValue);
     $('anaExpense').textContent = money(m.totalExpense);
+
+    // 经营总览 KPI 按「涨红跌绿」上色：收入/利润红、支出绿、应收橙（与小程序一致）
+    const colUp = '#E5484D', colDown = '#16A34A', colWarn = '#F59E0B';
+    $('anaSales').style.color = colUp;
+    $('anaRecv').style.color = colWarn;
+    $('anaExpense').style.color = colDown;
+    $('anaProfit').style.color = m.profit >= 0 ? colUp : colDown;
+    $('anaAdded').style.color = m.addedValue >= 0 ? colUp : colDown;
+    $('anaUnitAdded').style.color = m.unitAddedValue >= 0 ? colUp : colDown;
 
     // 预警区
     const alerts = detectAlerts();
@@ -971,6 +1048,18 @@ const Analysis = (() => {
         // 预警遮罩点击关闭
         if (e.target && e.target.id === 'alertConfigOverlay') {
           closeAlertConfig();
+          return;
+        }
+        // 商品分析：收入类/支出类 tab 切换
+        const ptab = e.target.closest && e.target.closest('#prodTabs .ana-tab');
+        if (ptab) {
+          const newTab = ptab.dataset.tab;
+          if (newTab === prodTab) return;
+          prodTab = newTab;
+          document.querySelectorAll('#prodTabs .ana-tab').forEach(t => t.classList.toggle('active', t === ptab));
+          document.getElementById('prodIncomeWrap').style.display = newTab === 'income' ? '' : 'none';
+          document.getElementById('prodPurchaseWrap').style.display = newTab === 'purchase' ? '' : 'none';
+          renderProduct();
           return;
         }
       });

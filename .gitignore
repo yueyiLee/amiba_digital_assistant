@@ -26,6 +26,24 @@ Thumbs.db
 *.swo
 .codebuddy/
 
+# 部署相关（CloudBase 部署脚本/配置/二进制包）
+# deploy/
+# logs/
+
+# 二进制依赖包
+deps.zip
+
+# 本地测试脚本
+test_server.js
+
+# 环境变量变体
+.env.*
+*.local
+
+# 构建缓存
+*.tsbuildinfo
+.npm
+
 # 日志
 *.log
 npm-debug.log*

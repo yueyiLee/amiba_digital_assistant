@@ -26,15 +26,39 @@ router.get('/transactions', async (req, res) => {
     if (endDate) { params.push(endDate); sql += ` AND t.date<=$${++pi}`; }
     sql += ' ORDER BY t.date DESC, t.id DESC';
     const rows = await db.queryAll(sql, params);
-    ok(res, rows);
+    // 注入关联合同的拼接名（日期-客户[-商品等]）
+    const cids = [...new Set(rows.map(r => r.contract_id).filter(Boolean))];
+    const nameMap = {};
+    if (cids.length) {
+      const cons = await db.queryAll(`SELECT co.id, co.date, co.direction, cu.name AS customer_name,
+        (SELECT COALESCE(string_agg(p.name, ','), '') FROM contract_items ci LEFT JOIN products p ON ci.product_id=p.id WHERE ci.contract_id=co.id) AS prod_names,
+        (SELECT COALESCE(string_agg(cs.service_name, ','), '') FROM contract_services cs WHERE cs.contract_id=co.id) AS svc_names
+        FROM contracts co LEFT JOIN customers cu ON co.customer_id=cu.id WHERE co.id = ANY($1)`, [cids]);
+      cons.forEach(co => {
+        const names = [];
+        if (co.prod_names) co.prod_names.split(',').forEach(n => n && names.push(n));
+        if (co.svc_names) co.svc_names.split(',').forEach(n => n && names.push(n));
+        const d = co.date || '';
+        const display_name = names.length
+          ? `${d}-${co.customer_name || '—'}-${names[0]}${names.length > 1 ? '等' : ''}`
+          : `${d}-${co.customer_name || '—'}`;
+        nameMap[co.id] = { display_name, direction: co.direction };
+      });
+    }
+    const out = rows.map(r => ({
+      ...r,
+      contract_display_name: r.contract_id ? (nameMap[r.contract_id] ? nameMap[r.contract_id].display_name : null) : null,
+      contract_direction: r.contract_id ? (nameMap[r.contract_id] ? nameMap[r.contract_id].direction : null) : null
+    }));
+    ok(res, out);
   } catch (e) { fail400(res, e.message); }
 });
 
 router.post('/transactions', async (req, res) => {
   try {
-    const { amount, type, unit, date, customer_id, product_id, note, category } = req.body || {};
+    const { amount, type, unit, date, customer_id, product_id, note, category, contract_id } = req.body || {};
     if (amount == null || !type || !date) return fail400(res, '缺少必要字段（金额/类型/日期）');
-    // 归属校验：客户/商品必须是当前账号自己的，杜绝跨账号引用泄露
+    // 归属校验：客户/商品/合同必须是当前账号自己的，杜绝跨账号引用泄露
     if (customer_id) {
       const c = await db.queryOne('SELECT 1 FROM customers WHERE id=$1 AND owner_id=$2', [customer_id, req.user.id]);
       if (!c) return fail400(res, '客户不存在或无权访问');
@@ -43,9 +67,13 @@ router.post('/transactions', async (req, res) => {
       const p = await db.queryOne('SELECT 1 FROM products WHERE id=$1 AND owner_id=$2', [product_id, req.user.id]);
       if (!p) return fail400(res, '商品不存在或无权访问');
     }
+    if (contract_id) {
+      const co = await db.queryOne('SELECT 1 FROM contracts WHERE id=$1 AND owner_id=$2', [contract_id, req.user.id]);
+      if (!co) return fail400(res, '合同不存在或无权访问');
+    }
     const result = await db.insertReturning(
-      'INSERT INTO transactions(amount,type,unit,customer_id,product_id,date,note,category,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id',
-      [amount, type, unit || '全公司', customer_id || null, product_id || null, date, note || '', category || '', req.user.id]
+      'INSERT INTO transactions(amount,type,unit,customer_id,product_id,date,note,category,contract_id,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
+      [amount, type, unit || '全公司', customer_id || null, product_id || null, date, note || '', category || '', contract_id || null, req.user.id]
     );
     ok(res, { id: result.rows[0].id });
   } catch (e) { fail400(res, e.message); }
@@ -56,7 +84,7 @@ router.put('/transactions/:id', async (req, res) => {
     const t = req.body || {};
     const old = await db.queryOne('SELECT * FROM transactions WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
     if (!old) return fail404(res, '记录不存在');
-    // 归属校验：客户/商品必须是当前账号自己的
+    // 归属校验：客户/商品/合同必须是当前账号自己的
     if (t.customer_id) {
       const c = await db.queryOne('SELECT 1 FROM customers WHERE id=$1 AND owner_id=$2', [t.customer_id, req.user.id]);
       if (!c) return fail400(res, '客户不存在或无权访问');
@@ -65,13 +93,19 @@ router.put('/transactions/:id', async (req, res) => {
       const p = await db.queryOne('SELECT 1 FROM products WHERE id=$1 AND owner_id=$2', [t.product_id, req.user.id]);
       if (!p) return fail400(res, '商品不存在或无权访问');
     }
+    if (t.contract_id) {
+      const co = await db.queryOne('SELECT 1 FROM contracts WHERE id=$1 AND owner_id=$2', [t.contract_id, req.user.id]);
+      if (!co) return fail400(res, '合同不存在或无权访问');
+    }
+    const newContract = t.contract_id === undefined ? old.contract_id : (t.contract_id || null);
     await db.query(
-      'UPDATE transactions SET amount=$1,type=$2,unit=$3,customer_id=$4,product_id=$5,date=$6,note=$7,category=$8 WHERE id=$9 AND owner_id=$10',
+      'UPDATE transactions SET amount=$1,type=$2,unit=$3,customer_id=$4,product_id=$5,date=$6,note=$7,category=$8,contract_id=$9 WHERE id=$10 AND owner_id=$11',
       [t.amount ?? old.amount, t.type ?? old.type, t.unit ?? old.unit,
        t.customer_id === undefined ? old.customer_id : (t.customer_id || null),
        t.product_id === undefined ? old.product_id : (t.product_id || null),
        t.date ?? old.date, t.note ?? old.note,
-       t.category === undefined ? old.category : (t.category || ''), req.params.id, req.user.id]
+       t.category === undefined ? old.category : (t.category || ''),
+       newContract, req.params.id, req.user.id]
     );
     ok(res, { success: true });
   } catch (e) { fail400(res, e.message); }
@@ -194,20 +228,26 @@ router.delete('/transactions/:id', async (req, res) => {
 
 /* ========== 2. products 商品 ========== */
 router.get('/products', async (req, res) => {
-  try { ok(res, await db.queryAll('SELECT * FROM products WHERE owner_id=$1 ORDER BY id DESC', [req.user.id])); }
+  try {
+    const sql = `SELECT p.*, COALESCE(i.quantity, 0) AS stock
+      FROM products p
+      LEFT JOIN inventory i ON i.product_id = p.id AND i.owner_id = p.owner_id
+      WHERE p.owner_id=$1 ORDER BY p.id DESC`;
+    ok(res, await db.queryAll(sql, [req.user.id]));
+  }
   catch (e) { fail400(res, e.message); }
 });
 
 router.post('/products', async (req, res) => {
   try {
-    const { name, brand, unit, category1, category2, purchase_price, sale_price } = req.body || {};
+    const { name, brand, unit, category1, category2, purchase_price, sale_price, notes, warning_threshold, initial_stock } = req.body || {};
     if (!name || !category1) return fail400(res, '缺少必要字段（名称/一级分类）');
     const result = await db.insertReturning(
-      'INSERT INTO products(name,brand,unit,category1,category2,purchase_price,sale_price,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
-      [name, brand || '', unit || '件', category1, category2 || '', purchase_price || 0, sale_price || 0, req.user.id]
+      'INSERT INTO products(name,brand,unit,category1,category2,purchase_price,sale_price,notes,warning_threshold,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
+      [name, brand || '', unit || '件', category1, category2 || '', purchase_price || 0, sale_price || 0, notes || '', warning_threshold || 0, req.user.id]
     );
     const newId = result.rows[0].id;
-    await db.query('INSERT INTO inventory(product_id,quantity,avg_price,owner_id) VALUES($1,$2,$3,$4)', [newId, 0, purchase_price || 0, req.user.id]);
+    await db.query('INSERT INTO inventory(product_id,quantity,avg_price,owner_id) VALUES($1,$2,$3,$4)', [newId, initial_stock || 0, purchase_price || 0, req.user.id]);
     ok(res, { id: newId });
   } catch (e) { fail400(res, e.message); }
 });
@@ -218,9 +258,10 @@ router.put('/products/:id', async (req, res) => {
     const old = await db.queryOne('SELECT * FROM products WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
     if (!old) return fail404(res, '商品不存在');
     await db.query(
-      'UPDATE products SET name=$1,brand=$2,unit=$3,category1=$4,category2=$5,purchase_price=$6,sale_price=$7 WHERE id=$8 AND owner_id=$9',
+      'UPDATE products SET name=$1,brand=$2,unit=$3,category1=$4,category2=$5,purchase_price=$6,sale_price=$7,notes=$8,warning_threshold=$9 WHERE id=$10 AND owner_id=$11',
       [p.name ?? old.name, p.brand ?? old.brand, p.unit ?? old.unit, p.category1 ?? old.category1,
-       p.category2 ?? old.category2, p.purchase_price ?? old.purchase_price, p.sale_price ?? old.sale_price, req.params.id, req.user.id]
+       p.category2 ?? old.category2, p.purchase_price ?? old.purchase_price, p.sale_price ?? old.sale_price,
+       p.notes ?? old.notes, p.warning_threshold ?? old.warning_threshold, req.params.id, req.user.id]
     );
     ok(res, { success: true });
   } catch (e) { fail400(res, e.message); }
@@ -241,14 +282,39 @@ router.get('/customers', async (req, res) => {
   catch (e) { fail400(res, e.message); }
 });
 
+// 客户汇总：通过 contracts / transactions 关联表实时计算应收与最近交易日期
+router.get('/customers/summary', async (req, res) => {
+  try {
+    const sql = `SELECT c.id,
+      COALESCE((
+        SELECT SUM(ct.amount - COALESCE((
+          SELECT SUM(t.amount)
+          FROM transactions t
+          WHERE t.contract_id = ct.id AND t.amount > 0 AND t.owner_id = $1
+        ), 0))
+        FROM contracts ct
+        WHERE ct.customer_id = c.id AND ct.direction = 'sale' AND ct.owner_id = $1
+      ), 0) AS receivable,
+      COALESCE((
+        SELECT MAX(t2.date)
+        FROM transactions t2
+        WHERE t2.customer_id = c.id AND t2.owner_id = $1
+      ), '') AS last_transaction_date
+    FROM customers c
+    WHERE c.owner_id = $1`;
+    ok(res, await db.queryAll(sql, [req.user.id]));
+  }
+  catch (e) { fail400(res, e.message); }
+});
+
 router.post('/customers', async (req, res) => {
   try {
-    const { name, type, contact, address } = req.body || {};
+    const { name, type, contact, address, notes } = req.body || {};
     if (!name) return fail400(res, '客户名称必填');
     if (!type) return fail400(res, '客户类型必选');
     const result = await db.insertReturning(
-      'INSERT INTO customers(name,type,contact,address,owner_id) VALUES($1,$2,$3,$4,$5) RETURNING id',
-      [name, type, contact || '', address || '', req.user.id]
+      'INSERT INTO customers(name,type,contact,address,notes,owner_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING id',
+      [name, type, contact || '', address || '', notes || '', req.user.id]
     );
     ok(res, { id: result.rows[0].id });
   } catch (e) { fail400(res, e.message); }
@@ -259,8 +325,8 @@ router.put('/customers/:id', async (req, res) => {
     const c = req.body || {};
     const old = await db.queryOne('SELECT * FROM customers WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
     if (!old) return fail404(res, '客户不存在');
-    await db.query('UPDATE customers SET name=$1,type=$2,contact=$3,address=$4 WHERE id=$5 AND owner_id=$6',
-      [c.name ?? old.name, c.type ?? old.type, c.contact ?? old.contact, c.address ?? old.address, req.params.id, req.user.id]);
+    await db.query('UPDATE customers SET name=$1,type=$2,contact=$3,address=$4,notes=$5 WHERE id=$6 AND owner_id=$7',
+      [c.name ?? old.name, c.type ?? old.type, c.contact ?? old.contact, c.address ?? old.address, c.notes ?? old.notes, req.params.id, req.user.id]);
     ok(res, { success: true });
   } catch (e) { fail400(res, e.message); }
 });
@@ -482,28 +548,89 @@ router.delete('/employees/:id', async (req, res) => {
   } catch (e) { fail400(res, e.message); }
 });
 
-/* ========== 8. contracts 合同 ========== */
+/* ========== 8. contracts 合同（含商品明细 / 服务费明细，拼接合同名） ========== */
 router.get('/contracts', async (req, res) => {
   try {
-    ok(res, await db.queryAll(
+    const rows = await db.queryAll(
       `SELECT co.*, c.name AS customer_name FROM contracts co LEFT JOIN customers c ON co.customer_id=c.id WHERE co.owner_id=$1 ORDER BY co.id DESC`,
       [req.user.id]
-    ));
+    );
+    const ids = rows.map(r => r.id);
+    let itemsMap = {}, svcMap = {};
+    if (ids.length) {
+      const inSql = ids.map((_, i) => `$${i + 1}`).join(',');
+      const items = await db.queryAll(
+        `SELECT ci.*, p.name AS product_name FROM contract_items ci LEFT JOIN products p ON ci.product_id=p.id WHERE ci.contract_id IN (${inSql}) AND ci.owner_id=$${ids.length + 1}`,
+        [...ids, req.user.id]
+      );
+      const svcs = await db.queryAll(
+        `SELECT cs.* FROM contract_services cs WHERE cs.contract_id IN (${inSql}) AND cs.owner_id=$${ids.length + 1}`,
+        [...ids, req.user.id]
+      );
+      items.forEach(it => { (itemsMap[it.contract_id] = itemsMap[it.contract_id] || []).push(it); });
+      svcs.forEach(s => { (svcMap[s.contract_id] = svcMap[s.contract_id] || []).push(s); });
+    }
+    const out = rows.map(r => {
+      const its = itemsMap[r.id] || [];
+      const svs = svcMap[r.id] || [];
+      const names = [...its.map(i => i.product_name || '未命名商品'), ...svs.map(s => s.service_name || '未命名服务')];
+      const date = r.date || r.start_date || '';
+      const displayName = names.length
+        ? `${date}-${r.customer_name || '—'}-${names[0]}${names.length > 1 ? '等' : ''}`
+        : `${date}-${r.customer_name || '—'}`;
+      const detailAmount = its.reduce((s, i) => s + (Number(i.amount) || 0), 0) + svs.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+      return { ...r, items: its, services: svs, display_name: displayName, amount: (its.length || svs.length) ? detailAmount : (Number(r.amount) || 0) };
+    });
+    ok(res, out);
   } catch (e) { fail400(res, e.message); }
 });
 
 router.post('/contracts', async (req, res) => {
   try {
-    const { contract_no, customer_id, amount, status, start_date, end_date, note } = req.body || {};
-    if (!contract_no || !customer_id || amount == null) return fail400(res, '请填写必填项（合同号/客户/金额）');
-    // 归属校验：合同关联的客户必须是当前账号自己的
+    const { customer_id, date, direction, status, start_date, end_date, note, items, services } = req.body || {};
+    if (!customer_id) return fail400(res, '请选择客户');
     const cust = await db.queryOne('SELECT 1 FROM customers WHERE id=$1 AND owner_id=$2', [customer_id, req.user.id]);
     if (!cust) return fail400(res, '客户不存在或无权访问');
+    const dir = direction === 'purchase' ? 'purchase' : 'sale';
+    const useDate = date || start_date || '';
     const result = await db.insertReturning(
-      'INSERT INTO contracts(contract_no,customer_id,amount,status,start_date,end_date,note,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
-      [contract_no, customer_id, amount, status || '进行中', start_date || '', end_date || '', note || '', req.user.id]
+      'INSERT INTO contracts(contract_no,customer_id,amount,status,start_date,end_date,note,date,direction,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
+      ['', customer_id, 0, status || '进行中', start_date || '', end_date || '', note || '', useDate, dir, req.user.id]
     );
-    ok(res, { id: result.rows[0].id });
+    const cid = result.rows[0].id;
+    let total = 0;
+    // 商品明细
+    for (const it of (Array.isArray(items) ? items : [])) {
+      const pid = Number(it.product_id);
+      if (!pid) continue;
+      const qty = Number(it.quantity) || 0;
+      const price = Number(it.actual_price) || 0;
+      const amt = Number((qty * price).toFixed(2));
+      const pr = await db.queryOne('SELECT 1 FROM products WHERE id=$1 AND owner_id=$2', [pid, req.user.id]);
+      if (!pr) continue; // 归属校验：跳过非本账号商品
+      await db.query(
+        'INSERT INTO contract_items(contract_id,product_id,quantity,actual_price,amount,owner_id) VALUES($1,$2,$3,$4,$5,$6)',
+        [cid, pid, qty, price, amt, req.user.id]
+      );
+      total += amt;
+    }
+    // 服务费明细（service_id 可选：手动填 service_name 也允许）
+    for (const sv of (Array.isArray(services) ? services : [])) {
+      const sid = sv.service_id ? Number(sv.service_id) : null;
+      const sname = String(sv.service_name || '').trim() || (sid ? '' : '服务费');
+      const samt = Number(sv.amount) || 0;
+      if (sid) {
+        const sr = await db.queryOne('SELECT 1 FROM services WHERE id=$1 AND owner_id=$2', [sid, req.user.id]);
+        if (!sr) continue;
+      }
+      await db.query(
+        'INSERT INTO contract_services(contract_id,service_id,service_name,amount,owner_id) VALUES($1,$2,$3,$4,$5)',
+        [cid, sid, sname, samt, req.user.id]
+      );
+      total += samt;
+    }
+    await db.query('UPDATE contracts SET amount=$1 WHERE id=$2', [Number(total.toFixed(2)), cid]);
+    ok(res, { id: cid });
   } catch (e) { fail400(res, e.message); }
 });
 
@@ -512,14 +639,47 @@ router.put('/contracts/:id', async (req, res) => {
     const c = req.body || {};
     const old = await db.queryOne('SELECT * FROM contracts WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
     if (!old) return fail404(res, '合同不存在');
-    // 归属校验：若更换了关联客户，必须是当前账号自己的
     if (c.customer_id && c.customer_id !== old.customer_id) {
       const cust2 = await db.queryOne('SELECT 1 FROM customers WHERE id=$1 AND owner_id=$2', [c.customer_id, req.user.id]);
       if (!cust2) return fail400(res, '客户不存在或无权访问');
     }
-    await db.query('UPDATE contracts SET contract_no=$1,customer_id=$2,amount=$3,status=$4,start_date=$5,end_date=$6,note=$7 WHERE id=$8 AND owner_id=$9',
-      [c.contract_no ?? old.contract_no, c.customer_id ?? old.customer_id, c.amount ?? old.amount,
-       c.status ?? old.status, c.start_date ?? old.start_date, c.end_date ?? old.end_date, c.note ?? old.note, req.params.id, req.user.id]);
+    const dir = c.direction === 'purchase' ? 'purchase' : (c.direction === 'sale' ? 'sale' : (old.direction || 'sale'));
+    const useDate = c.date !== undefined ? (c.date || old.start_date || '') : (old.date || '');
+    await db.query(
+      'UPDATE contracts SET customer_id=$1,status=$2,start_date=$3,end_date=$4,note=$5,date=$6,direction=$7 WHERE id=$8 AND owner_id=$9',
+      [c.customer_id ?? old.customer_id, c.status ?? old.status, c.start_date ?? old.start_date,
+       c.end_date ?? old.end_date, c.note ?? old.note, useDate, dir, req.params.id, req.user.id]
+    );
+    // 全量替换明细（幂等：先删后插）
+    const cid = Number(req.params.id);
+    await db.query('DELETE FROM contract_items WHERE contract_id=$1 AND owner_id=$2', [cid, req.user.id]);
+    await db.query('DELETE FROM contract_services WHERE contract_id=$1 AND owner_id=$2', [cid, req.user.id]);
+    let total = 0;
+    for (const it of (Array.isArray(c.items) ? c.items : [])) {
+      const pid = Number(it.product_id);
+      if (!pid) continue;
+      const qty = Number(it.quantity) || 0;
+      const price = Number(it.actual_price) || 0;
+      const amt = Number((qty * price).toFixed(2));
+      const pr = await db.queryOne('SELECT 1 FROM products WHERE id=$1 AND owner_id=$2', [pid, req.user.id]);
+      if (!pr) continue;
+      await db.query('INSERT INTO contract_items(contract_id,product_id,quantity,actual_price,amount,owner_id) VALUES($1,$2,$3,$4,$5,$6)',
+        [cid, pid, qty, price, amt, req.user.id]);
+      total += amt;
+    }
+    for (const sv of (Array.isArray(c.services) ? c.services : [])) {
+      const sid = sv.service_id ? Number(sv.service_id) : null;
+      const sname = String(sv.service_name || '').trim() || (sid ? '' : '服务费');
+      const samt = Number(sv.amount) || 0;
+      if (sid) {
+        const sr = await db.queryOne('SELECT 1 FROM services WHERE id=$1 AND owner_id=$2', [sid, req.user.id]);
+        if (!sr) continue;
+      }
+      await db.query('INSERT INTO contract_services(contract_id,service_id,service_name,amount,owner_id) VALUES($1,$2,$3,$4,$5)',
+        [cid, sid, sname, samt, req.user.id]);
+      total += samt;
+    }
+    await db.query('UPDATE contracts SET amount=$1 WHERE id=$2', [Number(total.toFixed(2)), cid]);
     ok(res, { success: true });
   } catch (e) { fail400(res, e.message); }
 });
@@ -529,6 +689,57 @@ router.delete('/contracts/:id', async (req, res) => {
     const exist = await db.queryOne('SELECT id FROM contracts WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
     if (!exist) return fail404(res, '合同不存在');
     await db.query('DELETE FROM contracts WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
+    ok(res, { success: true });
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 8b. services 服务（与杂费类别 expense_items 独立，勿混用） ========== */
+router.get('/services', async (req, res) => {
+  try {
+    const { q } = req.query;
+    let sql = 'SELECT id, name, reference_cost, note FROM services WHERE owner_id=$1';
+    const params = [req.user.id];
+    if (q) { params.push('%' + q + '%'); sql += ` AND name ILIKE $${params.length}`; }
+    sql += ' ORDER BY id DESC';
+    ok(res, await db.queryAll(sql, params));
+  } catch (e) { fail400(res, e.message); }
+});
+
+router.post('/services', async (req, res) => {
+  try {
+    const { name, reference_cost, note } = req.body || {};
+    if (!name || !String(name).trim()) return fail400(res, '服务名称必填');
+    const nm = String(name).trim();
+    const dup = await db.queryOne('SELECT 1 FROM services WHERE owner_id=$1 AND name=$2', [req.user.id, nm]);
+    if (dup) return fail400(res, '该服务已存在');
+    const result = await db.insertReturning(
+      'INSERT INTO services(owner_id,name,reference_cost,note) VALUES($1,$2,$3,$4) RETURNING id',
+      [req.user.id, nm, Number(reference_cost) || 0, note ? String(note).trim() : '']
+    );
+    ok(res, { id: result.rows[0].id });
+  } catch (e) { fail400(res, e.message); }
+});
+
+router.put('/services/:id', async (req, res) => {
+  try {
+    const { name, reference_cost, note } = req.body || {};
+    if (!name || !String(name).trim()) return fail400(res, '服务名称必填');
+    const old = await db.queryOne('SELECT * FROM services WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
+    if (!old) return fail404(res, '服务不存在');
+    const nm = String(name).trim();
+    const dup = await db.queryOne('SELECT 1 FROM services WHERE owner_id=$1 AND name=$2 AND id<>$3', [req.user.id, nm, req.params.id]);
+    if (dup) return fail400(res, '该服务已存在');
+    await db.query('UPDATE services SET name=$1, reference_cost=$2, note=$3 WHERE id=$4 AND owner_id=$5',
+      [nm, Number(reference_cost) || 0, note ? String(note).trim() : '', req.params.id, req.user.id]);
+    ok(res, { success: true });
+  } catch (e) { fail400(res, e.message); }
+});
+
+router.delete('/services/:id', async (req, res) => {
+  try {
+    const exist = await db.queryOne('SELECT id FROM services WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
+    if (!exist) return fail404(res, '服务不存在');
+    await db.query('DELETE FROM services WHERE id=$1 AND owner_id=$2', [req.params.id, req.user.id]);
     ok(res, { success: true });
   } catch (e) { fail400(res, e.message); }
 });
@@ -608,6 +819,7 @@ router.post('/init/sample', async (req, res) => {
     await db.query('DELETE FROM work_hours WHERE owner_id=$1', [uid]);
     await db.query('DELETE FROM salaries WHERE owner_id=$1', [uid]);
     await db.query('DELETE FROM contracts WHERE owner_id=$1', [uid]);
+    await db.query('DELETE FROM services WHERE owner_id=$1', [uid]);
     await db.query('DELETE FROM inventory WHERE owner_id=$1', [uid]);
     await db.query('DELETE FROM products WHERE owner_id=$1', [uid]);
     await db.query('DELETE FROM customers WHERE owner_id=$1', [uid]);
@@ -617,6 +829,384 @@ router.post('/init/sample', async (req, res) => {
     // 重新生成完整示例
     await db.seedForUser(uid, 'full');
     ok(res, { success: true, message: '示例数据已重置' });
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 8b. 候选合同推荐（一键补关联） ========== */
+router.get('/contracts/suggest', async (req, res) => {
+  try {
+    const { direction, customer_id, date } = req.query; // direction: 'sale' | 'purchase'
+    let sql = `SELECT co.id, co.date, co.direction, c.name AS customer_name,
+      (SELECT COALESCE(string_agg(p.name, ','), '') FROM contract_items ci LEFT JOIN products p ON ci.product_id=p.id WHERE ci.contract_id=co.id) AS prod_names,
+      (SELECT COALESCE(string_agg(cs.service_name, ','), '') FROM contract_services cs WHERE cs.contract_id=co.id) AS svc_names
+      FROM contracts co LEFT JOIN customers c ON co.customer_id=c.id WHERE co.owner_id=$1`;
+    const params = [req.user.id];
+    let pi = 1;
+    if (direction) { params.push(direction); sql += ` AND co.direction=$${++pi}`; }
+    if (customer_id) { params.push(customer_id); sql += ` AND co.customer_id=$${++pi}`; }
+    sql += ' ORDER BY co.id DESC';
+    const rows = await db.queryAll(sql, params);
+    const list = rows.map(co => {
+      const names = [];
+      if (co.prod_names) co.prod_names.split(',').forEach(n => n && names.push(n));
+      if (co.svc_names) co.svc_names.split(',').forEach(n => n && names.push(n));
+      const d = co.date || '';
+      const display_name = names.length
+        ? `${d}-${co.customer_name || '—'}-${names[0]}${names.length > 1 ? '等' : ''}`
+        : `${d}-${co.customer_name || '—'}`;
+      return { id: co.id, display_name, date: d, direction: co.direction, customer_name: co.customer_name };
+    });
+    // 日期相近排序（客户已通过 SQL 过滤优先）
+    if (date) {
+      list.forEach(x => {
+        const diff = Math.abs((new Date(x.date) - new Date(date)) / 86400000);
+        x._diff = isNaN(diff) ? 9999 : diff;
+      });
+      list.sort((a, b) => a._diff - b._diff);
+    }
+    ok(res, list);
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 8c. 商品分析聚合（收入类 / 支出类，基于 contract_items） ========== */
+async function productAnalysis(ownerId, direction, sd, ed) {
+  const isSale = direction === 'sale';
+  // 1) 总额走 transactions（合同可能未补全，但收支记录一定有）。
+  //    销售：type='销售收入' AND amount>0；
+  //    采购：type='材料采购' AND amount<0（用 abs 累加）。
+  //    不强制 product_id：历史录入的销售收入可能没填商品，但金额依然要计入"销售总额"。
+  const totalAmtRow = isSale
+    ? await db.queryOne(`SELECT COALESCE(SUM(amount), 0) AS s FROM transactions
+        WHERE owner_id=$1 AND type='销售收入' AND amount>0 AND date BETWEEN $2 AND $3`, [ownerId, sd, ed])
+    : await db.queryOne(`SELECT COALESCE(SUM(ABS(amount)), 0) AS s FROM transactions
+        WHERE owner_id=$1 AND type='材料采购' AND amount<0 AND date BETWEEN $2 AND $3`, [ownerId, sd, ed]);
+  const totalAmount = Number(totalAmtRow && totalAmtRow.s) || 0;
+
+  // 2) 按商品聚合金额（TOP5 来源）——只聚合"已选商品"的交易
+  const byAmtRows = isSale
+    ? await db.queryAll(`SELECT t.product_id, p.name AS product_name, SUM(t.amount) AS amt
+        FROM transactions t LEFT JOIN products p ON t.product_id = p.id
+        WHERE t.owner_id=$1 AND t.type='销售收入' AND t.amount>0 AND t.product_id IS NOT NULL AND t.date BETWEEN $2 AND $3
+        GROUP BY t.product_id, p.name ORDER BY amt DESC LIMIT 100`, [ownerId, sd, ed])
+    : await db.queryAll(`SELECT t.product_id, p.name AS product_name, SUM(ABS(t.amount)) AS amt
+        FROM transactions t LEFT JOIN products p ON t.product_id = p.id
+        WHERE t.owner_id=$1 AND t.type='材料采购' AND t.amount<0 AND t.product_id IS NOT NULL AND t.date BETWEEN $2 AND $3
+        GROUP BY t.product_id, p.name ORDER BY amt DESC LIMIT 100`, [ownerId, sd, ed]);
+
+  // 3) 数量、价格变动仍走合同（因为 transactions 没有 quantity 字段）
+  const qtyRows = await db.queryAll(`SELECT ci.product_id, p.name AS product_name,
+      SUM(ci.quantity) AS qty, SUM(ci.quantity * ci.actual_price) AS amt
+      FROM contract_items ci
+      JOIN contracts co ON ci.contract_id = co.id
+      LEFT JOIN products p ON ci.product_id = p.id
+      WHERE co.owner_id=$1 AND co.direction=$2 AND co.date BETWEEN $3 AND $4
+      GROUP BY ci.product_id, p.name ORDER BY amt DESC`, [ownerId, direction, sd, ed]);
+
+  const series = await db.queryAll(`SELECT ci.product_id, p.name AS product_name, co.date, ci.actual_price
+      FROM contract_items ci
+      JOIN contracts co ON ci.contract_id = co.id
+      LEFT JOIN products p ON ci.product_id = p.id
+      WHERE co.owner_id=$1 AND co.direction=$2 AND co.date BETWEEN $3 AND $4
+      ORDER BY ci.product_id, co.date`, [ownerId, direction, sd, ed]);
+  const byPid = {};
+  series.forEach(s => {
+    if (s.product_id == null) return;
+    (byPid[s.product_id] = byPid[s.product_id] || []).push({ date: s.date, price: Number(s.actual_price) || 0, name: s.product_name });
+  });
+  const priceChange = Object.values(byPid).map(arr => {
+    const prices = arr.map(x => x.price).filter(v => v > 0);
+    if (prices.length < 2) return null;
+    const min = Math.min(...prices), max = Math.max(...prices);
+    const change = min > 0 ? (max - min) / min : 0;
+    return { product_name: arr[0].name, change, min, max, samples: arr.length };
+  }).filter(Boolean).sort((a, b) => b.change - a.change).slice(0, 5);
+
+  // 4) 成本/毛利率：销售类的"对应成本"=同期材料采购 abs(amount)（不强制商品）
+  //    采购类的 total_cost 即为自身
+  const costRow = await db.queryOne(`SELECT COALESCE(SUM(ABS(amount)), 0) AS c FROM transactions
+      WHERE owner_id=$1 AND type='材料采购' AND amount<0 AND date BETWEEN $2 AND $3`, [ownerId, sd, ed]);
+  const totalCost = Number(costRow && costRow.c) || 0;
+  const totalQty = qtyRows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
+  const avgGm = isSale && totalAmount > 0 ? Math.max(0, (totalAmount - totalCost) / totalAmount) : 0;
+
+  // 4b) 按商品的采购成本（仅销售 tab 需要，用于计算每行毛利率）
+  //     同一商品在同期材料采购中的 abs(amount) 累加
+  let costByPid = {};
+  if (isSale) {
+    const costByPidRows = await db.queryAll(`SELECT product_id, SUM(ABS(amount)) AS cost
+        FROM transactions
+        WHERE owner_id=$1 AND type='材料采购' AND amount<0 AND product_id IS NOT NULL AND date BETWEEN $2 AND $3
+        GROUP BY product_id`, [ownerId, sd, ed]);
+    costByPidRows.forEach(r => { costByPid[r.product_id] = Number(r.cost) || 0; });
+  }
+
+  // 5) 输出
+  const byQty = qtyRows.slice().sort((a, b) => Number(b.qty) - Number(a.qty)).slice(0, 5)
+    .map(r => ({ product_id: r.product_id, product_name: r.product_name, total_qty: Number(r.qty) || 0, total_amount: Number(r.amt) || 0 }));
+  const byAmount = byAmtRows.slice(0, 5).map(r => {
+    const sale = Number(r.amt) || 0;
+    const cost = isSale ? (costByPid[r.product_id] || 0) : 0;
+    const gm = isSale && sale > 0 ? Math.max(0, (sale - cost) / sale) : 0;
+    return { product_id: r.product_id, product_name: r.product_name, total_amount: sale, cost, gm };
+  });
+  return {
+    total_sale: totalAmount,
+    total_cost: isSale ? totalCost : totalAmount,
+    total_qty: totalQty,
+    avg_gm: avgGm,
+    by_qty: byQty,
+    by_amount: byAmount,
+    price_change: priceChange
+  };
+}
+
+router.get('/analysis/product-sales', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const sd = startDate || '0001-01-01', ed = endDate || '9999-12-31';
+    ok(res, await productAnalysis(req.user.id, 'sale', sd, ed));
+  } catch (e) { fail400(res, e.message); }
+});
+
+router.get('/analysis/product-purchase', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const sd = startDate || '0001-01-01', ed = endDate || '9999-12-31';
+    ok(res, await productAnalysis(req.user.id, 'purchase', sd, ed));
+  } catch (e) { fail400(res, e.message); }
+});
+
+/* ========== 8d. 分析驾驶舱聚合（小程序「分析 → 驾驶舱」） ==========
+ * 口径严格对齐 PC 端 public/js/calculator.js 的 calculateMetrics()
+ * 与 public/js/analysis.js 的 detectAlerts() 默认规则，禁止自创公式。
+ */
+
+// 驾驶舱预警默认阈值（对应 analysis.js 的 DEFAULT_ALERT_RULES）
+const COCKPIT_ALERT_RULES = {
+  /** 客户应收：>= 80000 红 */
+  customerRecvRed: 80000,
+  /** 客户应收：>= 40000 黄 */
+  customerRecvYellow: 40000,
+  /** 商品毛利率：< 0.15 红 */
+  productMargin: 0.15,
+  /** 库存呆滞：> 60 天 黄 */
+  productStockAge: 60,
+  /** 净现金流：< -20000 红 */
+  cashGap: -20000,
+};
+
+/** 驾驶舱预警最多返回条数，避免移动端长列表 */
+const COCKPIT_ALERT_LIMIT = 10;
+
+const numOf = (v) => Number(v) || 0;
+
+/**
+ * 构建 transactions 表 WHERE 子句及对应参数数组。
+ * 确保 SQL 占位符与参数数组严格一一对应，避免分散耦合。
+ * @param {number} ownerId
+ * @param {string} sd
+ * @param {string} ed
+ * @param {string|null} unit '全部单元' 或空值表示不过滤
+ * @returns {{ where: string, params: Array }}
+ */
+function buildTxFilter(ownerId, sd, ed, unit) {
+  const useUnit = unit && unit !== '全部单元';
+  return {
+    where: `t.owner_id=$1 AND t.date BETWEEN $2 AND $3${useUnit ? ' AND t.unit=$4' : ''}`,
+    params: useUnit ? [ownerId, sd, ed, unit] : [ownerId, sd, ed],
+  };
+}
+
+/**
+ * 分析驾驶舱聚合
+ * @param {number} ownerId 租户 id
+ * @param {string} sd 起始日期 YYYY-MM-DD
+ * @param {string} ed 结束日期 YYYY-MM-DD
+ * @param {string} unit 单元筛选，'全部单元' 表示不过滤
+ */
+async function cockpitAnalysis(ownerId, sd, ed, unit) {
+  const { where: txWhere, params: txParams } = buildTxFilter(ownerId, sd, ed, unit);
+
+  // ---- 1) 按 type 汇总（一次扫描拿全部基础层指标）----
+  // 收入类按 SUM(amount) 累加，支出类按 SUM(ABS(amount)) 累加（对齐 calculator.js sumByType）
+  const typeRows = await db.queryAll(
+    `SELECT t.type AS type, COALESCE(SUM(t.amount), 0) AS raw, COALESCE(SUM(ABS(t.amount)), 0) AS abs_amt
+     FROM transactions t WHERE ${txWhere} GROUP BY t.type`,
+    txParams
+  );
+  const raw = {}, absAmt = {};
+  typeRows.forEach((r) => { raw[r.type] = numOf(r.raw); absAmt[r.type] = numOf(r.abs_amt); });
+
+  // 基础层（calculator.js:139-151）
+  const salesIncome = raw['销售收入'] || 0;
+  const cashIncome = raw['现金收入'] || 0;
+  const otherIncome = raw['其他收入'] || 0;
+  const totalIncome = salesIncome + cashIncome + otherIncome;
+  const materialCost = absAmt['材料采购'] || 0;
+  const processCost = absAmt['委托加工'] || 0;
+  const consumeCost = materialCost + processCost;
+  const miscCost = absAmt['杂费支出'] || 0;
+  const cashExpense = absAmt['现金支出'] || 0;
+  const taxCost = absAmt['税金'] || 0;
+  const receivable = salesIncome - cashIncome;
+
+  // 阿米巴核心层（calculator.js:154-166）
+  const addedValue = totalIncome - consumeCost - miscCost;
+  const totalExpense = materialCost + processCost + miscCost + taxCost;
+  const payable = totalExpense - cashExpense;
+
+  // ---- 2) 总工资 = Σ(在岗员工工时 × 时薪)（calculator.js:156-161）----
+  // work_hours.month 为 YYYY-MM，按所选区间的年月过滤
+  const smk = String(sd).slice(0, 7), emk = String(ed).slice(0, 7);
+  const salaryRow = await db.queryOne(
+    `SELECT COALESCE(SUM(wh.hours * e.hourly_rate), 0) AS salary, COALESCE(SUM(wh.hours), 0) AS hours
+     FROM work_hours wh JOIN employees e ON e.id = wh.employee_id
+     WHERE wh.owner_id=$1 AND wh.month BETWEEN $2 AND $3 AND COALESCE(e.status, 'active') = 'active'`,
+    [ownerId, smk, emk]
+  );
+  const totalSalary = numOf(salaryRow && salaryRow.salary);
+  const totalHours = numOf(salaryRow && salaryRow.hours);
+
+  const profit = addedValue - totalSalary - taxCost;
+  const netCashFlow = cashIncome - cashExpense;
+
+  // ---- 3) 库存占用 = Σ(quantity × avg_price) ----
+  const invRow = await db.queryOne(
+    `SELECT COALESCE(SUM(quantity * avg_price), 0) AS v FROM inventory WHERE owner_id=$1`,
+    [ownerId]
+  );
+  const inventoryValue = numOf(invRow && invRow.v);
+
+  // ---- 4) 按客户应收（analysis.js:114-119：销售收入 - 现金收入）----
+  const custRows = await db.queryAll(
+    `SELECT t.customer_id, c.name AS customer_name,
+            COALESCE(SUM(CASE WHEN t.type='销售收入' THEN t.amount ELSE 0 END), 0) AS sale,
+            COALESCE(SUM(CASE WHEN t.type='销售收入' THEN t.amount
+                              WHEN t.type='现金收入' THEN -t.amount ELSE 0 END), 0) AS recv
+     FROM transactions t JOIN customers c ON c.id = t.customer_id
+     WHERE ${txWhere} AND t.customer_id IS NOT NULL
+     GROUP BY t.customer_id, c.name`,
+    txParams
+  );
+
+  // ---- 5) 按商品销售/成本/毛利率（analysis.js:341-354）----
+  const prodRows = await db.queryAll(
+    `SELECT t.product_id, p.name AS product_name,
+            COALESCE(SUM(CASE WHEN t.type='销售收入' THEN t.amount ELSE 0 END), 0) AS sale,
+            COALESCE(SUM(CASE WHEN t.type='材料采购' THEN ABS(t.amount) ELSE 0 END), 0) AS cost
+     FROM transactions t JOIN products p ON p.id = t.product_id
+     WHERE ${txWhere} AND t.product_id IS NOT NULL
+     GROUP BY t.product_id, p.name`,
+    txParams
+  );
+  const productMetrics = prodRows.map((r) => {
+    const sale = numOf(r.sale), cost = numOf(r.cost);
+    return { id: r.product_id, name: r.product_name, sale, cost, gm: sale > 0 ? (sale - cost) / sale : 0 };
+  });
+
+  // ---- 6) 库存呆滞（analysis.js:156-169）----
+  const staleRows = await db.queryAll(
+    `SELECT i.product_id, p.name AS product_name, i.quantity,
+            EXTRACT(EPOCH FROM (NOW() - i.updated_at)) / 86400 AS days
+     FROM inventory i LEFT JOIN products p ON p.id = i.product_id
+     WHERE i.owner_id=$1 AND i.quantity > 0 AND i.updated_at IS NOT NULL`,
+    [ownerId]
+  );
+
+  // ---- 7) 组装预警（红在前、黄在后，对齐 analysis.js:198-199）----
+  const alerts = [];
+  custRows.forEach((r) => {
+    const recv = numOf(r.recv);
+    if (recv >= COCKPIT_ALERT_RULES.customerRecvRed) {
+      alerts.push({ level: 'red', title: `客户【${r.customer_name}】应收 ${fmtCny(recv)}`, sub: '超过预警阈值，建议立即跟进回款', value: fmtCny(recv), jumpTo: 'customer' });
+    } else if (recv >= COCKPIT_ALERT_RULES.customerRecvYellow) {
+      alerts.push({ level: 'yellow', title: `客户【${r.customer_name}】应收 ${fmtCny(recv)}`, sub: '需保持关注', value: fmtCny(recv), jumpTo: 'customer' });
+    }
+  });
+  productMetrics.forEach((r) => {
+    if (r.sale > 0 && r.gm < COCKPIT_ALERT_RULES.productMargin) {
+      const pct = `${(r.gm * 100).toFixed(1)}%`;
+      alerts.push({ level: 'red', title: `商品【${r.name}】毛利率 ${pct}`, sub: '毛利率跌破健康线', value: pct, jumpTo: 'product' });
+    }
+  });
+  staleRows.forEach((r) => {
+    const days = Math.floor(numOf(r.days));
+    if (days > COCKPIT_ALERT_RULES.productStockAge) {
+      alerts.push({ level: 'yellow', title: `商品【${r.product_name || '未知商品'}】库存呆滞 ${days} 天`, sub: '建议盘点/促销/调拨', value: `${days} 天`, jumpTo: 'product' });
+    }
+  });
+  if (netCashFlow < COCKPIT_ALERT_RULES.cashGap) {
+    alerts.push({ level: 'red', title: `净现金流 ${fmtCny(netCashFlow)}`, sub: '现金缺口较大，关注回款', value: fmtCny(netCashFlow), jumpTo: 'overview' });
+  }
+  alerts.sort((a, b) => (a.level === b.level ? 0 : a.level === 'red' ? -1 : 1));
+
+  // ---- 8) 各维度 Top 榜 ----
+  // 单元附加价值：work_hours / employees 均无 unit 字段，无法按单元拆分工时，
+  // 故降级为「按单元的附加价值总额」，由 unit_hours_available=false 告知前端。
+  const unitRows = await db.queryAll(
+    `SELECT COALESCE(t.unit, '全公司') AS unit,
+            COALESCE(SUM(CASE WHEN t.type IN ('销售收入','现金收入','其他收入') THEN t.amount
+                              WHEN t.type IN ('材料采购','委托加工','杂费支出') THEN -ABS(t.amount)
+                              ELSE 0 END), 0) AS added_value
+     FROM transactions t WHERE ${txWhere}
+     GROUP BY COALESCE(t.unit, '全公司') ORDER BY added_value DESC LIMIT 1`,
+    txParams
+  );
+  const topCustomer = custRows.length > 0 ? custRows.slice().sort((a, b) => numOf(b.sale) - numOf(a.sale))[0] : undefined;
+  const topProduct = productMetrics.length > 0 ? productMetrics.slice().sort((a, b) => b.sale - a.sale)[0] : undefined;
+  const topUnit = unitRows.length > 0 ? unitRows[0] : undefined;
+
+  const tops = [
+    {
+      label: 'Top 客户贡献',
+      name: topCustomer ? topCustomer.customer_name : '',
+      value: topCustomer ? fmtCny(numOf(topCustomer.sale)) : '',
+      jumpTo: 'customer',
+    },
+    {
+      label: 'Top 商品销售',
+      name: topProduct ? topProduct.name : '',
+      value: topProduct ? fmtCny(topProduct.sale) : '',
+      jumpTo: 'product',
+    },
+    {
+      label: '单元附加价值排行',
+      name: topUnit ? topUnit.unit : '',
+      value: topUnit ? fmtCny(numOf(topUnit.added_value)) : '',
+      jumpTo: 'amoeba',
+    },
+  ];
+
+  return {
+    kpi: {
+      total_sales: salesIncome,
+      total_profit: profit,
+      receivable,
+      payable,
+      net_cash_flow: netCashFlow,
+      inventory_value: inventoryValue,
+      profit_rate: salesIncome > 0 ? (profit / salesIncome) * 100 : 0,
+      added_value: addedValue,
+      total_hours: totalHours,
+      total_salary: totalSalary,
+    },
+    alerts: alerts.slice(0, COCKPIT_ALERT_LIMIT),
+    alert_count: { red: alerts.filter((a) => a.level === 'red').length, yellow: alerts.filter((a) => a.level === 'yellow').length },
+    tops,
+    unit_hours_available: false,
+  };
+}
+
+/** 驾驶舱内部金额格式化（¥ + 千分位整数，与 PC 端 fmtMetricValue 一致） */
+function fmtCny(v) {
+  return `¥${Math.round(Number(v) || 0).toLocaleString('en-US')}`;
+}
+
+router.get('/analysis/cockpit', async (req, res) => {
+  try {
+    const { startDate, endDate, unit } = req.query;
+    const sd = startDate || '0001-01-01', ed = endDate || '9999-12-31';
+    ok(res, await cockpitAnalysis(req.user.id, sd, ed, unit));
   } catch (e) { fail400(res, e.message); }
 });
 
