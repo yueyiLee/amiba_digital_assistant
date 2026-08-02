@@ -1,51 +1,14 @@
 /**
- * db.ts — PostgreSQL 数据库连接与初始化（CloudBase 云函数兼容版）
+ * db.ts — PostgreSQL 数据库连接与初始化
  *
- * 双模式：
- *  - 云端（检测到 TENCENTCLOUD_SECRETID 等运行时临时密钥）：走 CloudBase manager-node 的
- *    executePGSql 访问环境内置 PostgreSQL（无需 pg 原生 TCP，也无需任何显式密钥）。
- *  - 本地 / 其他环境：走 pg 原生连接池（保持原有行为，便于本地开发）。
- *
- * 对上层暴露的接口（query / queryOne / queryAll / init）保持不变，路由层无需改动。
+ * 统一使用 pg 原生连接池直连 PostgreSQL（本地与云端部署通用）。
+ * 对上层暴露的接口（query / queryOne / queryAll / insertReturning / init）保持不变。
  */
 import { Pool, QueryResult as PgQueryResult } from 'pg';
 import type { DbStatus, DiagResult, QueryResult } from './types/db';
 import { seedAccounts } from './seed';
 
-const hasCloudCreds: boolean = !!(
-  process.env.TENCENTCLOUD_SECRETID &&
-  process.env.TENCENTCLOUD_SECRETKEY
-);
-
-// 是否通过环境变量显式配置了原生 PostgreSQL 连接
-const hasNativePgConfig: boolean = !!(process.env.DATABASE_URL || process.env.PG_HOST || process.env.PG_DATABASE);
-
-// 若显式配置了外部 PG 地址（非内置模板占位），一律走 pg 原生直连。
-const DIRECT_PG: boolean = !!(
-  process.env.PG_HOST &&
-  process.env.PG_HOST !== '{{envId}}.pg.rdb.cloud.tencent.com' &&
-  process.env.PG_HOST.indexOf('rdb.cloud.tencent.com') === -1
-);
-const ENV: string = process.env.SCF_NAMESPACE || process.env.TCB_ENV || 'amiba-d3gk34ae899822073';
-
-/**
- * 统一判断是否应走云端 executePGSql 路径。
- * 保持与原始 db.js 一致的逻辑：仅当未显式配置原生 PG 且存在云端凭据时才走云端。
- * query / insertReturning 均使用此函数。
- */
-function shouldUseCloud(): boolean {
-  return !hasNativePgConfig && (!!cloudApp || hasCloudCreds);
-}
-
-/**
- * 判断 insertReturning 是否走云端（与 query 略有不同：DIRECT_PG 模式下也强制走原生）。
- * 原始逻辑：!DIRECT_PG && (cloudApp || hasCloudCreds)
- */
-function shouldInsertReturningUseCloud(): boolean {
-  return !DIRECT_PG && (!!cloudApp || hasCloudCreds);
-}
-
-// ===== 初始化状态（供 /api/health 暴露，无需 CLS 也能观测）=====
+// ===== 初始化状态（供 /api/health 暴露）=====
 let dbReady = false;
 let dbError: string | null = null;
 function setDbStatus(ready: boolean, error?: string): void {
@@ -53,66 +16,16 @@ function setDbStatus(ready: boolean, error?: string): void {
   dbError = error || null;
 }
 function getStatus(): DbStatus {
-  return { ready: dbReady, error: dbError };
+  return { ready: dbError ? false : dbReady, error: dbError };
 }
 
 // 诊断信息：暴露容器内关键环境变量是否存在（不暴露取值），便于排查连接问题
 function diag(): DiagResult {
-  const relevant: string[] = Object.keys(process.env).filter((k: string) =>
-    /^(TENCENTCLOUD_|TCB_|SCF_|PG|POSTGRES|DATABASE|PGHOST|PGUSER|PGPASSWORD|PGDATABASE|PGPORT)/i.test(k)
-  );
   return {
-    mode: hasNativePgConfig ? 'native-pg' : (hasCloudCreds ? 'cloud-executePGSql' : 'native-local'),
-    hasCloudCreds,
-    hasNativePgConfig,
-    envId: ENV,
+    mode: 'native-pg',
+    hasNativePgConfig: !!(process.env.DATABASE_URL || process.env.PG_HOST || process.env.PG_DATABASE),
     poolConnected: pool.totalCount > 0,
-    envKeys: relevant,
   };
-}
-
-// 云端 SDK 客户端延迟创建（不在模块加载时缓存）
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let cloudApp: any = null;
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function getCloudApp(): any {
-  if (!cloudApp) {
-    const CloudBase = require('@cloudbase/manager-node');
-    cloudApp = CloudBase.init({
-      secretId: process.env.TENCENTCLOUD_SECRETID,
-      secretKey: process.env.TENCENTCLOUD_SECRETKEY,
-      token: process.env.TENCENTCLOUD_SESSIONTOKEN,
-      envId: ENV,
-    });
-    console.log('[DB] 使用 CloudBase executePGSql 访问内置 PostgreSQL');
-  }
-  return cloudApp;
-}
-
-async function cloudQuery(Sql: string): Promise<Record<string, unknown>> {
-  let app = getCloudApp();
-  try {
-    const result = await app.database.executePGSql({ EnvId: ENV, Sql });
-    return result as unknown as Record<string, unknown>;
-  } catch (e: unknown) {
-    const errMsg: string = e instanceof Error ? e.message : String(e || '');
-    const m: string = errMsg.toLowerCase();
-
-    // 区分可重试的凭证/认证错误与不可重试的 SQL 语法/业务错误
-    const isAuthError = m.includes('secretid') || m.includes('secretkey') || m.includes('token') ||
-      m.includes('expired') || m.includes('credential') || m.includes('auth');
-    const isSyntaxError = m.includes('syntax') || m.includes('parse error') || m.includes('column') ||
-      m.includes('relation') || m.includes('violates');
-
-    if (isAuthError && !isSyntaxError) {
-      console.warn('[DB] 凭证疑似过期，重建 SDK 客户端并重试:', errMsg);
-      cloudApp = null;
-      app = getCloudApp();
-      return (await app.database.executePGSql({ EnvId: ENV, Sql })) as unknown as Record<string, unknown>;
-    }
-    throw e;
-  }
 }
 
 let _pool: Pool | null = null;
@@ -147,100 +60,12 @@ const pool: Pool = new Proxy({} as Pool, {
   },
 });
 
-// ===== 云端适配：executePGSql 的结果 → { rows: [{ col: val }] } =====
-function coerce(v: unknown): unknown {
-  if (v === null || v === undefined) return null;
-  if (typeof v !== 'string') return v;
-  const t: string = v.trim();
-  if (t === 'true') return true;
-  if (t === 'false') return false;
-  if (/^-?\d+$/.test(t)) {
-    const n: number = Number(t);
-    if (Number.isSafeInteger(n)) return n;
-  }
-  if (/^-?\d+\.\d+$/.test(t)) return Number(t);
-  return v;
-}
-
-interface CloudBaseQueryResponse {
-  Columns?: string[];
-  Rows?: string[];
-}
-
-interface AdaptedQueryResult {
-  rows: Record<string, unknown>[];
-}
-
-function adapt(res: CloudBaseQueryResponse): AdaptedQueryResult {
-  const cols: string[] = (res && res.Columns) || [];
-  const rows: Record<string, unknown>[] = ((res && res.Rows) || []).map((s: string) => {
-    let arr: unknown[] = [];
-    try { arr = JSON.parse(s); } catch (_e: unknown) { arr = []; }
-    const obj: Record<string, unknown> = {};
-    cols.forEach((c: string, i: number) => { obj[c] = coerce(arr[i]); });
-    return obj;
-  });
-  return { rows };
-}
-
-// pg 风格 $1/$2 参数 → 安全的 SQL 字面量
-function quote(v: unknown): string {
-  if (v === null || v === undefined) return 'NULL';
-  if (Array.isArray(v)) {
-    if (v.length === 0) return "'{}'";
-    return "'{" + v.map((x) =>
-      x === null || x === undefined ? 'NULL' :
-      typeof x === 'number' ? (Number.isFinite(x) ? String(x) : 'NULL') :
-      '"' + String(x).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'
-    ).join(',') + "}'";
-  }
-  if (v instanceof Date) return "'" + v.toISOString() + "'";
-  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'NULL';
-  if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
-  return "'" + String(v).replace(/'/g, "''") + "'";
-}
-
-function bind(text: string, params?: unknown[]): string {
-  if (!params || params.length === 0) return text;
-  return text.replace(/\$(\d+)/g, (_m: string, i: string) => quote(params[Number(i) - 1]));
-}
-
-// 已知表名白名单：所有动态拼接的表名（如 ${table}）必须先经此校验，杜绝 SQL 注入
-const KNOWN_TABLES: ReadonlySet<string> = new Set([
-  'users', 'customers', 'products', 'inventory', 'contracts', 'services',
-  'contract_services', 'employees', 'work_hours', 'salaries', 'transactions',
-  'categories', 'expense_items', 'expense_types', 'settings',
-]);
-
-function assertTable(t: string): string {
-  if (!KNOWN_TABLES.has(t)) {
-    throw new Error(`[DB] 拒绝访问未知表名: ${t}`);
-  }
-  return t;
-}
-
 async function query(text: string, params?: unknown[]): Promise<QueryResult> {
-  if (shouldUseCloud()) {
-    const res = await cloudQuery(bind(text, params));
-    return adapt(res as unknown as CloudBaseQueryResponse);
-  }
   const result: PgQueryResult = await getPool().query(text, params);
   return result;
 }
 
 async function insertReturning(text: string, params?: unknown[]): Promise<QueryResult> {
-  if (shouldInsertReturningUseCloud()) {
-    // 使用 dotAll 模式匹配跨行 RETURNING 子句
-    const insertPart: string = text.replace(/\s+RETURNING\s+.*$/is, '');
-    await cloudQuery(bind(insertPart, params));
-    const tableMatch: RegExpMatchArray | null = insertPart.match(/INTO\s+(\w+)/i);
-    if (tableMatch) {
-      const tableName: string = assertTable(tableMatch[1]);
-      const res = await cloudQuery(`SELECT id FROM ${tableName} ORDER BY id DESC LIMIT 1`);
-      return adapt(res as unknown as CloudBaseQueryResponse);
-    }
-    return { rows: [{}] };
-  }
   return query(text, params);
 }
 

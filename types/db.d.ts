@@ -15,11 +15,8 @@ export interface QueryResult {
 
 export interface DiagResult {
   mode: string;
-  hasCloudCreds: boolean;
   hasNativePgConfig: boolean;
-  envId: string;
   poolConnected: boolean;
-  envKeys: string[];
 }
 
 export interface DbModule {
