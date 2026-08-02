@@ -6,6 +6,10 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import { ensureJwtSecret } from './middleware/auth';
+// 启动期校验：JWT_SECRET 缺失则明确拒绝启动（保留 I1 安全语义，且 dotenv 已加载）
+ensureJwtSecret();
+
 import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import path from 'path';

@@ -219,7 +219,16 @@ function adapt(res: CloudBaseQueryResponse): AdaptedQueryResult {
 // pg 风格 $1/$2 参数 → 安全的 SQL 字面量
 function quote(v: unknown): string {
   if (v === null || v === undefined) return 'NULL';
-  if (typeof v === 'number') return String(v);
+  if (Array.isArray(v)) {
+    if (v.length === 0) return "'{}'";
+    return "'{" + v.map((x) =>
+      x === null || x === undefined ? 'NULL' :
+      typeof x === 'number' ? (Number.isFinite(x) ? String(x) : 'NULL') :
+      '"' + String(x).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'
+    ).join(',') + "}'";
+  }
+  if (v instanceof Date) return "'" + v.toISOString() + "'";
+  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'NULL';
   if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
   return "'" + String(v).replace(/'/g, "''") + "'";
 }
@@ -227,6 +236,20 @@ function quote(v: unknown): string {
 function bind(text: string, params?: unknown[]): string {
   if (!params || params.length === 0) return text;
   return text.replace(/\$(\d+)/g, (_m: string, i: string) => quote(params[Number(i) - 1]));
+}
+
+// 已知表名白名单：所有动态拼接的表名（如 ${table}）必须先经此校验，杜绝 SQL 注入
+const KNOWN_TABLES: ReadonlySet<string> = new Set([
+  'users', 'customers', 'products', 'inventory', 'contracts', 'services',
+  'contract_services', 'employees', 'work_hours', 'salaries', 'transactions',
+  'categories', 'expense_items', 'expense_types', 'settings',
+]);
+
+function assertTable(t: string): string {
+  if (!KNOWN_TABLES.has(t)) {
+    throw new Error(`[DB] 拒绝访问未知表名: ${t}`);
+  }
+  return t;
 }
 
 async function query(text: string, params?: unknown[]): Promise<QueryResult> {
@@ -245,7 +268,8 @@ async function insertReturning(text: string, params?: unknown[]): Promise<QueryR
     await cloudQuery(bind(insertPart, params));
     const tableMatch: RegExpMatchArray | null = insertPart.match(/INTO\s+(\w+)/i);
     if (tableMatch) {
-      const res = await cloudQuery(`SELECT id FROM ${tableMatch[1]} ORDER BY id DESC LIMIT 1`);
+      const tableName: string = assertTable(tableMatch[1]);
+      const res = await cloudQuery(`SELECT id FROM ${tableName} ORDER BY id DESC LIMIT 1`);
       return adapt(res as unknown as CloudBaseQueryResponse);
     }
     return { rows: [{}] };
@@ -281,6 +305,7 @@ const INIT_TABLES_SQL = `
     type TEXT DEFAULT '个人',
     contact TEXT DEFAULT '',
     address TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
     owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW()
   );
@@ -294,6 +319,8 @@ const INIT_TABLES_SQL = `
     category2 TEXT DEFAULT '',
     purchase_price REAL DEFAULT 0,
     sale_price REAL DEFAULT 0,
+    notes TEXT DEFAULT '',
+    warning_threshold REAL DEFAULT 0,
     owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW()
   );
@@ -683,19 +710,13 @@ async function ensureContractUpgradeColumns(): Promise<void> {
 async function fixOrphanedOwners(): Promise<void> {
   const admin = await queryOne("SELECT id FROM users WHERE username='admin'") as UserRow | null;
   if (!admin) return;
+  // 仅修复指向「不存在用户」的悬空 owner_id，绝不强行改写已有的合法归属，避免破坏真实多用户数据
   const tables: string[] = ['customers', 'products', 'inventory', 'contracts', 'employees', 'work_hours', 'salaries', 'transactions', 'categories', 'expense_items'];
   for (const t of tables) {
     try {
-      await query(`UPDATE ${t} SET owner_id=$1 WHERE owner_id IS NOT NULL AND owner_id NOT IN (SELECT id FROM users)`, [admin.id]);
+      await query(`UPDATE ${assertTable(t)} SET owner_id=$1 WHERE owner_id IS NOT NULL AND owner_id NOT IN (SELECT id FROM users)`, [admin.id]);
     } catch (e: unknown) {
       console.error('[DB] fixOrphanedOwners 失败(' + t + '):', (e as Error).message);
-    }
-  }
-  for (const sid of [1, 2, 3]) {
-    try {
-      await query('UPDATE customers SET owner_id=$1 WHERE id=$2 AND owner_id<>$1', [admin.id, sid]);
-    } catch (e: unknown) {
-      console.error('[DB] fixSeedCustomers 失败(' + sid + '):', (e as Error).message);
     }
   }
 }
@@ -715,7 +736,7 @@ async function migrateLegacyData(): Promise<void> {
   if (admin) {
     const tables: string[] = ['customers', 'products', 'inventory', 'contracts', 'employees', 'work_hours', 'salaries', 'transactions', 'settings', 'categories', 'expense_items'];
     for (const t of tables) {
-      await query(`UPDATE ${t} SET owner_id=$1 WHERE owner_id IS NULL`, [admin.id]);
+      await query(`UPDATE ${assertTable(t)} SET owner_id=$1 WHERE owner_id IS NULL`, [admin.id]);
     }
   }
   await fixSettingsPkey();
@@ -844,6 +865,13 @@ async function seedForUser(uid: number, mode: 'full' | 'sample'): Promise<void> 
 }
 
 async function init(): Promise<void> {
+  const errors: string[] = [];
+  // 单步容错：任一迁移失败仅记录并继续，避免后续关键步骤（含种子账号）被跳过
+  const step = async (name: string, fn: () => Promise<unknown>): Promise<void> => {
+    try { await fn(); }
+    catch (e: unknown) { const m = (e as Error).message; errors.push(`${name}: ${m}`); console.error(`[DB] 迁移步骤跳过(${name}):`, m); }
+  };
+
   try {
     const stmts: string[] = INIT_TABLES_SQL.split(';').map((s) => s.trim()).filter(Boolean);
     for (const st of stmts) {
@@ -854,44 +882,53 @@ async function init(): Promise<void> {
       }
     }
 
-    await ensureOwnerColumns();
-    await ensureInventoryColumns();
-    await ensureTransactionCategoryColumn();
-    await ensureExpenseItemNoteColumn();
-    await ensureEmployeeStatusColumns();
-    await ensureEmployeeStatusHistoryColumns();
-    await ensureEmployeeStatusHistoryBackfill();
-    await migrateLegacyData();
-    await ensureDefaultCategoriesForAll();
-    await ensureExpenseItemsForAll();
-    await ensureExpenseTypesForAll();
-    await migrateTaxExpenseTypeLinkage();
-    await ensureUserCompanyNameColumn();
-    await ensureContractUpgradeColumns();
+    await step('ensureOwnerColumns', ensureOwnerColumns);
+    await step('ensureInventoryColumns', ensureInventoryColumns);
+    await step('ensureTransactionCategoryColumn', ensureTransactionCategoryColumn);
+    await step('ensureExpenseItemNoteColumn', ensureExpenseItemNoteColumn);
+    await step('ensureEmployeeStatusColumns', ensureEmployeeStatusColumns);
+    await step('ensureEmployeeStatusHistoryColumns', ensureEmployeeStatusHistoryColumns);
+    await step('ensureEmployeeStatusHistoryBackfill', ensureEmployeeStatusHistoryBackfill);
+    await step('migrateLegacyData', migrateLegacyData);
+    await step('ensureDefaultCategoriesForAll', ensureDefaultCategoriesForAll);
+    await step('ensureExpenseItemsForAll', ensureExpenseItemsForAll);
+    await step('ensureExpenseTypesForAll', ensureExpenseTypesForAll);
+    await step('migrateTaxExpenseTypeLinkage', migrateTaxExpenseTypeLinkage);
+    await step('ensureUserCompanyNameColumn', ensureUserCompanyNameColumn);
+    await step('ensureContractUpgradeColumns', ensureContractUpgradeColumns);
 
-    const r = await query('SELECT COUNT(*) AS c FROM users');
-    const count: number = r.rows[0] ? parseInt(String(r.rows[0].c), 10) : 0;
-    if (count === 0) {
-      console.log('[DB] 首次启动，创建种子账号与示例数据...');
-      const adminHash: string = bcrypt.hashSync('admin123', 10);
-      const editorHash: string = bcrypt.hashSync('editor123', 10);
-      await query(
-        'INSERT INTO users(username, password_hash, display_name, role) VALUES($1,$2,$3,$4),($5,$6,$7,$8)',
-        ['admin', adminHash, '系统管理员', 'admin', 'editor', editorHash, '数据录入员', 'admin']
-      );
-      const admin = await queryOne("SELECT id FROM users WHERE username='admin'") as UserRow | null;
-      const editor = await queryOne("SELECT id FROM users WHERE username='editor'") as UserRow | null;
-      if (admin) await seedForUser(admin.id, 'full');
-      if (editor) await seedForUser(editor.id, 'full');
-      console.log('[DB] 种子账号与示例数据初始化完成');
+    // 创建种子账号：独立容错，确保即使上述迁移有残留问题也能创建账号，避免首次启动无法登录
+    await step('seedAccounts', async () => {
+      const r = await query('SELECT COUNT(*) AS c FROM users');
+      const count: number = r.rows[0] ? parseInt(String(r.rows[0].c), 10) : 0;
+      if (count === 0) {
+        console.log('[DB] 首次启动，创建种子账号与示例数据...');
+        const adminHash: string = bcrypt.hashSync('admin123', 10);
+        const editorHash: string = bcrypt.hashSync('editor123', 10);
+        await query(
+          'INSERT INTO users(username, password_hash, display_name, role) VALUES($1,$2,$3,$4),($5,$6,$7,$8)',
+          ['admin', adminHash, '系统管理员', 'admin', 'editor', editorHash, '数据录入员', 'admin']
+        );
+        const admin = await queryOne("SELECT id FROM users WHERE username='admin'") as UserRow | null;
+        const editor = await queryOne("SELECT id FROM users WHERE username='editor'") as UserRow | null;
+        if (admin) await seedForUser(admin.id, 'full');
+        if (editor) await seedForUser(editor.id, 'full');
+        console.log('[DB] 种子账号与示例数据初始化完成');
+      } else {
+        console.log('[DB] 数据库已存在账号，跳过账号创建（示例数据按 owner 隔离）');
+      }
+    });
+
+    await step('fixOrphanedOwners', fixOrphanedOwners);
+
+    if (errors.length === 0) {
+      setDbStatus(true);
     } else {
-      console.log('[DB] 数据库已存在账号，跳过账号创建（示例数据按 owner 隔离）');
+      // 迁移有非致命错误，但核心可用：标记为 degraded 而不是彻底失败，保留可读写状态
+      setDbStatus(true, `部分迁移步骤跳过: ${errors.join('; ')}`);
     }
-
-    await fixOrphanedOwners();
-    setDbStatus(true);
   } catch (e: unknown) {
-    console.error('[DB] init 异常:', (e as Error).message);
+    console.error('[DB] init 致命异常:', (e as Error).message);
     setDbStatus(false, (e as Error).message);
   }
 }

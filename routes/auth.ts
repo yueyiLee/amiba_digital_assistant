@@ -5,7 +5,6 @@ import express, { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import * as db from '../db';
 import { signToken, requireAuth } from '../middleware/auth';
-import type { JwtPayload } from '../middleware/auth';
 import type { UserRow } from '../types/db';
 
 const router: Router = express.Router();

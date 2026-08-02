@@ -9,8 +9,12 @@ dotenv.config();
 import OpenAI from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
+const LLM_API_KEY: string = process.env.LLM_API_KEY || '';
+if (!LLM_API_KEY) {
+  console.warn('[llm-client] 未配置 LLM_API_KEY，AI 对话功能将不可用（调用时会明确报错）。');
+}
 const client = new OpenAI({
-  apiKey: process.env.LLM_API_KEY || 'sk-placeholder',
+  apiKey: LLM_API_KEY || 'sk-missing',
   baseURL: process.env.LLM_BASE_URL || 'https://api.deepseek.com/v1',
 });
 
@@ -29,6 +33,9 @@ async function chat(
   tools?: unknown[] | null,
   opts: ChatOptions = {}
 ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
+  if (!LLM_API_KEY) {
+    throw new Error('AI 功能未启用：缺少环境变量 LLM_API_KEY');
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const params: any = {
     model: MODEL,
@@ -63,6 +70,9 @@ async function chatStream(
   onDelta?: (text: string) => void,
   opts: ChatOptions = {}
 ): Promise<StreamToolCall> {
+  if (!LLM_API_KEY) {
+    throw new Error('AI 功能未启用：缺少环境变量 LLM_API_KEY');
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const params: any = {
     model: MODEL,

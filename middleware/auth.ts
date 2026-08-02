@@ -7,9 +7,22 @@
 import jwt from 'jsonwebtoken';
 import type { Request, Response, NextFunction } from 'express';
 
-// JWT 密钥：优先读环境变量，未配置时用默认值（仅本地开发）
-const JWT_SECRET: string = process.env.JWT_SECRET || 'amoeba-demo-secret-2026';
+// JWT 密钥：必须来自环境变量。注意 ESM 下 import 会被提升，
+// 模块顶层代码早于 main 入口的 dotenv.config() 执行，因此不能在
+// 顶层缓存 process.env.JWT_SECRET，而要在调用时实时读取。
 const JWT_EXPIRES = '7d';
+
+/**
+ * 启动期/运行期校验 JWT_SECRET 是否已配置。
+ * 实时从 process.env 读取，缺失时抛出明确错误，杜绝可伪造 token（保留 I1 安全语义）。
+ */
+export function ensureJwtSecret(): string {
+  const secret = process.env.JWT_SECRET || '';
+  if (!secret) {
+    throw new Error('[auth] 缺少环境变量 JWT_SECRET，无法安全签发/校验 token，服务已拒绝启动。');
+  }
+  return secret;
+}
 
 export interface JwtPayload {
   id: number;
@@ -20,6 +33,7 @@ export interface JwtPayload {
 }
 
 function signToken(user: JwtPayload): string {
+  const secret = ensureJwtSecret();
   return jwt.sign(
     {
       id: user.id,
@@ -28,7 +42,7 @@ function signToken(user: JwtPayload): string {
       display_name: user.display_name,
       company_name: user.company_name || '',
     },
-    JWT_SECRET,
+    secret,
     { expiresIn: JWT_EXPIRES }
   );
 }
@@ -41,9 +55,8 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
     return;
   }
   try {
-    req.user = jwt.verify(token, JWT_SECRET) as JwtPayload;
-    // 兼容旧 token：无 role 或旧角色统一视为 admin
-    if (!req.user.role || req.user.role !== 'admin') req.user.role = 'admin';
+    const secret = ensureJwtSecret();
+    req.user = jwt.verify(token, secret) as JwtPayload;
     next();
   } catch (e: unknown) {
     res.status(401).json({ error: '登录已过期，请重新登录' });
@@ -61,4 +74,4 @@ function requireRole(..._roles: string[]) {
   };
 }
 
-export { signToken, requireAuth, requireRole, JWT_SECRET };
+export { signToken, requireAuth, requireRole };

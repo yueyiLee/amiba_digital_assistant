@@ -10,6 +10,8 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import type { ToolCall, ToolResult, StreamToolCall } from '../types/ai';
 
 const MAX_TOOL_ROUNDS = 8;
+const MAX_TOOL_CALL_MS = 20000; // 单次工具调用超时，避免 LLM 挂起永久等待
+const MAX_TOOL_RESULT_CHARS = 4000; // 回传结果截断，避免大结果撑爆上下文
 
 /**
  * 执行单个工具调用
@@ -39,12 +41,21 @@ async function executeToolCall(toolCall: ToolCall, token: string): Promise<ToolR
   }
 
   try {
-    const result = await handler(args, token);
+    const resultPromise: Promise<unknown> = Promise.resolve(handler(args, token));
+    const timeoutPromise: Promise<unknown> = new Promise((_resolve, reject) =>
+      setTimeout(() => reject(new Error(`工具执行超时（>${MAX_TOOL_CALL_MS}ms）`)), MAX_TOOL_CALL_MS)
+    );
+    const result = await Promise.race([resultPromise, timeoutPromise]);
+    let content: string = JSON.stringify(result);
+    if (content.length > MAX_TOOL_RESULT_CHARS) {
+      content = content.slice(0, MAX_TOOL_RESULT_CHARS) +
+        `...(结果过长已截断，原始长度 ${content.length} 字符)`;
+    }
     return {
       tool_call_id: toolCall.id,
       role: 'tool',
       name: fnName,
-      content: JSON.stringify(result),
+      content,
     };
   } catch (err: unknown) {
     console.error(`[AI Engine] 工具 ${fnName} 执行失败:`, (err as Error).message);
