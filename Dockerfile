@@ -13,7 +13,7 @@ RUN npm install
 
 # 复制源码并编译
 COPY tsconfig.json ./
-COPY server.ts db.ts seed.ts ./
+COPY server.ts db.ts seed.ts logger.ts ./
 COPY middleware/ ./middleware/
 COPY routes/ ./routes/
 COPY ai/ ./ai/

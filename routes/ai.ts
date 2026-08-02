@@ -55,7 +55,7 @@ router.post('/chat', requireAuth, async (req: Request, res: Response) => {
 
     sendEvent('done', {});
   } catch (err: unknown) {
-    console.error('[AI Chat] SSE 错误:', (err as Error).message);
+    req.log.error({ err }, 'AI Chat SSE 错误');
     sendEvent('error', { message: (err as Error).message });
   } finally {
     res.end();
@@ -81,7 +81,7 @@ router.post('/chat-sync', requireAuth, async (req: Request, res: Response) => {
     );
     res.json(result);
   } catch (err: unknown) {
-    console.error('[AI Chat] 错误:', (err as Error).message);
+    req.log.error({ err }, 'AI Chat 同步对话错误');
     res.status(500).json({ error: 'AI 服务暂时不可用：' + (err as Error).message });
   }
 });

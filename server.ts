@@ -20,6 +20,7 @@ import businessRoutes from './routes/index';
 import exchangeRoutes from './routes/exchange';
 import aiRoutes from './routes/ai';
 import * as apiClient from './ai/api-client';
+import { rootLogger, requestLogger } from './logger';
 
 const app: Express = express();
 
@@ -28,6 +29,7 @@ apiClient.setApp(app);
 const PORT: number = parseInt(process.env.PORT || '3000', 10);
 
 // 中间件
+app.use(requestLogger); // 必须在其他中间件之前，为每个请求生成 requestId
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -65,19 +67,19 @@ app.get('*', (req: Request, res: Response) => {
 });
 
 // 全局错误处理
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('[ERROR]', err.message);
-  res.status(500).json({ error: err.message || '服务器内部错误' });
+app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+  req.log.error({ err }, '未捕获的服务器错误');
+  const isProduction: boolean = process.env.NODE_ENV === 'production';
+  res.status(500).json({ error: isProduction ? '服务器内部错误' : (err.message || '服务器内部错误') });
 });
 
 // 启动：先监听端口（保证 SCF HTTP 探测不会因 9000 无监听而返回 443），再后台初始化数据库
 function start(): void {
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n  ◎ 阿米巴经营数字助手 已启动（PostgreSQL）`);
-    console.log(`  → 监听: http://0.0.0.0:${PORT}\n`);
+    rootLogger.info({ port: PORT }, '阿米巴经营数字助手 已启动（PostgreSQL）');
   });
   // 后台初始化；失败时仅记录，不退出进程（避免端口 9000 无监听导致 443）
-  db.init().catch((e: Error) => console.error('[启动] db.init 异常:', e.message));
+  db.init().catch((e: Error) => rootLogger.error({ err: e }, 'db.init 异常'));
 }
 
 start();

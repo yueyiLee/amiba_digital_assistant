@@ -8,10 +8,11 @@ dotenv.config();
 
 import OpenAI from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { rootLogger } from '../logger';
 
 const LLM_API_KEY: string = process.env.LLM_API_KEY || '';
 if (!LLM_API_KEY) {
-  console.warn('[llm-client] 未配置 LLM_API_KEY，AI 对话功能将不可用（调用时会明确报错）。');
+  rootLogger.warn('未配置 LLM_API_KEY，AI 对话功能将不可用（调用时会明确报错）');
 }
 const client = new OpenAI({
   apiKey: LLM_API_KEY || 'sk-missing',

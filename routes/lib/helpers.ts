@@ -1,17 +1,23 @@
 /**
  * routes/lib/helpers.ts — 公共响应辅助函数与分析工具函数
  */
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import * as db from '../../db';
 
 export const ok = (res: Response, data: unknown): void => { res.json(data); };
 export const fail400 = (res: Response, msg: string): void => { res.status(400).json({ error: msg }); };
 export const fail404 = (res: Response, msg: string): void => { res.status(404).json({ error: msg }); };
 
-// 业务异常兜底：向客户端返回通用错误，避免泄露内部 SQL 细节；详细堆栈仅打印在服务端日志
+// 业务异常兜底：向客户端返回通用错误，避免泄露内部 SQL 细节；详细堆栈通过 logger 记录
 export const failErr = (res: Response, e: unknown): void => {
   const err = e instanceof Error ? e : new Error(String(e));
-  console.error('[API] 请求失败:', err.stack || err.message);
+  // 通过 res.req 获取请求级 logger（Express 内部引用），若无则回退到 console
+  const req = (res as { req?: Request }).req;
+  if (req?.log) {
+    req.log.error({ err }, 'API 请求失败');
+  } else {
+    console.error('[API] 请求失败:', err.stack || err.message);
+  }
   res.status(400).json({ error: '操作失败，请稍后重试' });
 };
 

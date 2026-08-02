@@ -7,6 +7,7 @@
 import { Pool, QueryResult as PgQueryResult } from 'pg';
 import type { DbStatus, DiagResult, QueryResult } from './types/db';
 import { seedAccounts } from './seed';
+import { rootLogger } from './logger';
 
 // ===== 初始化状态（供 /api/health 暴露）=====
 let dbReady = false;
@@ -268,7 +269,11 @@ async function init(): Promise<void> {
   // 单步容错：任一迁移失败仅记录并继续，避免后续关键步骤（含种子账号）被跳过
   const step = async (name: string, fn: () => Promise<unknown>): Promise<void> => {
     try { await fn(); }
-    catch (e: unknown) { const m = (e as Error).message; errors.push(`${name}: ${m}`); console.error(`[DB] 迁移步骤跳过(${name}):`, m); }
+    catch (e: unknown) {
+      const m = (e as Error).message;
+      errors.push(`${name}: ${m}`);
+      rootLogger.warn({ step: name, err: e }, 'DB 迁移步骤跳过');
+    }
   };
 
   try {
@@ -277,7 +282,7 @@ async function init(): Promise<void> {
       try {
         await query(st);
       } catch (e: unknown) {
-        console.error('[DB] 建表语句跳过:', st.slice(0, 50).replace(/\s+/g, ' '), '->', (e as Error).message);
+        rootLogger.warn({ stmt: st.slice(0, 50).replace(/\s+/g, ' '), err: e }, 'DB 建表语句跳过');
       }
     }
 
@@ -286,12 +291,14 @@ async function init(): Promise<void> {
 
     if (errors.length === 0) {
       setDbStatus(true);
+      rootLogger.info('数据库初始化完成');
     } else {
       // 迁移有非致命错误，但核心可用：标记为 degraded 而不是彻底失败，保留可读写状态
       setDbStatus(true, `部分迁移步骤跳过: ${errors.join('; ')}`);
+      rootLogger.warn({ errors }, '数据库初始化完成（部分步骤跳过）');
     }
   } catch (e: unknown) {
-    console.error('[DB] init 致命异常:', (e as Error).message);
+    rootLogger.error({ err: e }, 'DB init 致命异常');
     setDbStatus(false, (e as Error).message);
   }
 }

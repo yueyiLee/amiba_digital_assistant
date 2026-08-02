@@ -8,6 +8,7 @@ import { TOOL_DEFINITIONS, TOOL_HANDLERS } from './tools';
 import { buildSystemPrompt } from './prompts';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import type { ToolCall, ToolResult, StreamToolCall } from '../types/ai';
+import { rootLogger } from '../logger';
 
 const MAX_TOOL_ROUNDS = 8;
 const MAX_TOOL_CALL_MS = 20000; // 单次工具调用超时，避免 LLM 挂起永久等待
@@ -58,7 +59,7 @@ async function executeToolCall(toolCall: ToolCall, token: string): Promise<ToolR
       content,
     };
   } catch (err: unknown) {
-    console.error(`[AI Engine] 工具 ${fnName} 执行失败:`, (err as Error).message);
+    rootLogger.error({ toolName: fnName, err }, 'AI 工具执行失败');
     return {
       tool_call_id: toolCall.id,
       role: 'tool',

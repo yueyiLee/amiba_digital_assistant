@@ -64,7 +64,8 @@ router.post('/', async (req: Request, res: Response) => {
     );
     const newId: number = result.rows[0].id as number;
     try { await seedForUser(newId, 'sample'); }
-    catch (seedErr: unknown) { console.error('[用户] 示例数据初始化失败:', (seedErr as Error).message); }
+    catch (seedErr: unknown) { req.log.warn({ err: seedErr, userId: newId }, '新用户示例数据初始化失败'); }
+    req.log.info({ createdUserId: newId, createdUsername: username }, '管理员创建了新用户');
     res.json({
       id: newId, username, display_name: display_name || username, company_name: String(company_name).trim(), role: 'admin',
     });
@@ -121,6 +122,7 @@ router.put('/:id/password', async (req: Request, res: Response) => {
     }
     const hash: string = bcrypt.hashSync(newPassword, 10);
     await db.query('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, id]);
+    req.log.info({ targetUserId: id }, '管理员重置了用户密码');
     res.json({ success: true, message: '密码重置成功' });
   } catch (e: unknown) { res.status(500).json({ error: (e as Error).message }); }
 });
@@ -139,6 +141,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
       return;
     }
     await db.query('DELETE FROM users WHERE id = $1', [id]);
+    req.log.info({ deletedUserId: id, deletedUsername: user.username }, '管理员删除了用户');
     res.json({ success: true });
   } catch (e: unknown) { res.status(500).json({ error: (e as Error).message }); }
 });

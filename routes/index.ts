@@ -52,6 +52,7 @@ router.use(analysisRouter);
 router.post('/init/sample', async (req: Request, res: Response) => {
   try {
     const uid: number = req.user!.id;
+    req.log.info({ userId: uid }, '开始重置示例数据');
     await db.query('DELETE FROM transactions WHERE owner_id=$1', [uid]);
     await db.query('DELETE FROM work_hours WHERE owner_id=$1', [uid]);
     await db.query('DELETE FROM salaries WHERE owner_id=$1', [uid]);
@@ -64,6 +65,7 @@ router.post('/init/sample', async (req: Request, res: Response) => {
     await db.query('DELETE FROM categories WHERE owner_id=$1', [uid]);
     await db.query('DELETE FROM settings WHERE owner_id=$1', [uid]);
     await seedForUser(uid, 'full');
+    req.log.info({ userId: uid }, '示例数据重置完成');
     ok(res, { success: true, message: '示例数据已重置' });
   } catch (e: unknown) { failErr(res, e); }
 });

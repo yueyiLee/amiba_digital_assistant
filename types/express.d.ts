@@ -1,7 +1,9 @@
 /**
  * Express Request 接口扩展
- * 添加 JWT 认证中间件注入的 user 属性
+ * 添加 JWT 认证中间件注入的 user 属性，以及日志中间件注入的 log 属性
  */
+import type { Logger } from 'pino';
+
 declare global {
   namespace Express {
     interface Request {
@@ -12,6 +14,8 @@ declare global {
         display_name: string;
         company_name: string;
       };
+      /** 请求级子 logger，由 requestLogger 中间件注入 */
+      log: Logger;
     }
   }
 }

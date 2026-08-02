@@ -7,6 +7,7 @@
  */
 import bcrypt from 'bcryptjs';
 import { query, queryOne, insertReturning } from './db';
+import { rootLogger } from './logger';
 
 // 服装行业默认商品分类（系统预设，所有账号同步拥有，便于直接录入商品）
 export const DEFAULT_CATEGORIES: [string, string][] = [
@@ -171,7 +172,7 @@ export async function seedAccounts(): Promise<void> {
   const r = await query('SELECT COUNT(*) AS c FROM users');
   const count: number = r.rows[0] ? parseInt(String(r.rows[0].c), 10) : 0;
   if (count === 0) {
-    console.log('[DB] 首次启动，创建种子账号与示例数据...');
+    rootLogger.info('首次启动，创建种子账号与示例数据');
     const adminHash: string = bcrypt.hashSync('admin123', 10);
     const editorHash: string = bcrypt.hashSync('editor123', 10);
     await query(
@@ -182,8 +183,8 @@ export async function seedAccounts(): Promise<void> {
     const editor = await queryOne("SELECT id FROM users WHERE username='editor'") as { id: number } | null;
     if (admin) await seedForUser(admin.id, 'full');
     if (editor) await seedForUser(editor.id, 'full');
-    console.log('[DB] 种子账号与示例数据初始化完成');
+    rootLogger.info('种子账号与示例数据初始化完成');
   } else {
-    console.log('[DB] 数据库已存在账号，跳过账号创建（示例数据按 owner 隔离）');
+    rootLogger.info('数据库已存在账号，跳过账号创建（示例数据按 owner 隔离）');
   }
 }
