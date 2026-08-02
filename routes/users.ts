@@ -5,6 +5,7 @@
 import express, { Router, Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import * as db from '../db';
+import { seedForUser } from '../seed';
 import { requireAuth } from '../middleware/auth';
 import type { UserRow } from '../types/db';
 
@@ -62,7 +63,7 @@ router.post('/', async (req: Request, res: Response) => {
       [username, hash, display_name || username, String(company_name).trim(), 'admin']
     );
     const newId: number = result.rows[0].id as number;
-    try { await db.seedForUser(newId, 'sample'); }
+    try { await seedForUser(newId, 'sample'); }
     catch (seedErr: unknown) { console.error('[用户] 示例数据初始化失败:', (seedErr as Error).message); }
     res.json({
       id: newId, username, display_name: display_name || username, company_name: String(company_name).trim(), role: 'admin',

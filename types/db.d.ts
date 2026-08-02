@@ -31,7 +31,6 @@ export interface DbModule {
   init: () => Promise<void>;
   getStatus: () => DbStatus;
   getDiag: () => DiagResult;
-  seedForUser: (uid: number, mode: 'full' | 'sample') => Promise<void>;
 }
 
 export interface UserRow {

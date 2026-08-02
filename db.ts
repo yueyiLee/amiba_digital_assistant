@@ -9,8 +9,8 @@
  * 对上层暴露的接口（query / queryOne / queryAll / init）保持不变，路由层无需改动。
  */
 import { Pool, QueryResult as PgQueryResult } from 'pg';
-import bcrypt from 'bcryptjs';
-import type { DbStatus, DiagResult, UserRow, QueryResult } from './types/db';
+import type { DbStatus, DiagResult, QueryResult } from './types/db';
+import { seedAccounts } from './seed';
 
 const hasCloudCreds: boolean = !!(
   process.env.TENCENTCLOUD_SECRETID &&
@@ -70,39 +70,6 @@ function diag(): DiagResult {
     envKeys: relevant,
   };
 }
-
-// 服装行业默认商品分类（系统预设，所有账号同步拥有，便于直接录入商品）
-const DEFAULT_CATEGORIES: [string, string][] = [
-  ['上衣', '短袖'], ['上衣', '长袖'], ['上衣', '卫衣'], ['上衣', '衬衫'],
-  ['裤子', '牛仔裤'], ['裤子', '休闲裤'], ['裤子', '西裤'],
-  ['外套', '风衣'], ['外套', '棉服'], ['外套', '羽绒服'],
-  ['裙装', '连衣裙'], ['裙装', '半身裙'],
-  ['针织', '毛衣'], ['针织', '针织衫'],
-  ['配饰', '皮带'], ['配饰', '帽子'], ['配饰', '围巾'], ['配饰', '袜子'],
-  ['原材料', '纱线'], ['原材料', '坯布'],
-  ['成品面料', ''],
-];
-
-// 支出项细分预设
-const DEFAULT_EXPENSE_ITEMS: [string, string][] = [
-  ['processing', '染色费'], ['processing', '制造费用'], ['processing', '后整理费'],
-  ['misc', '培训费'], ['misc', '差旅费'], ['misc', '水电费'], ['misc', '维修费用'],
-  ['misc', '产品运营费用'], ['misc', '车辆费用'], ['misc', '库存利息'], ['misc', '其他管理杂费'],
-  ['misc', '医保社保保费'], ['misc', '门店租金'], ['misc', '物业费'],
-  ['misc', '机器设备折旧费'], ['misc', '财务费用'], ['misc', '预提所得税'],
-];
-
-// 收支类型预设
-const DEFAULT_EXPENSE_TYPES: [string, string, boolean, boolean, string][] = [
-  ['材料采购', 'expense', true, true, ''],
-  ['委托加工', 'expense', true, false, 'processing'],
-  ['杂费支出', 'expense', false, false, 'misc'],
-  ['税金', 'expense', false, false, ''],
-  ['现金支出', 'expense', true, true, ''],
-  ['销售收入', 'income', true, true, ''],
-  ['现金收入', 'income', true, true, ''],
-  ['其他收入', 'income', true, true, ''],
-];
 
 // 云端 SDK 客户端延迟创建（不在模块加载时缓存）
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -343,6 +310,8 @@ const INIT_TABLES_SQL = `
     status TEXT DEFAULT '进行中',
     start_date TEXT DEFAULT '',
     end_date TEXT DEFAULT '',
+    date TEXT DEFAULT '',
+    direction TEXT DEFAULT 'sale',
     note TEXT DEFAULT '',
     owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -354,6 +323,8 @@ const INIT_TABLES_SQL = `
     position TEXT DEFAULT '',
     hourly_rate REAL DEFAULT 0,
     join_date TEXT DEFAULT '',
+    status TEXT DEFAULT 'active',
+    leave_date TEXT DEFAULT '',
     owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW()
   );
@@ -395,6 +366,7 @@ const INIT_TABLES_SQL = `
     unit TEXT DEFAULT '全公司',
     customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
     product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+    contract_id INTEGER REFERENCES contracts(id) ON DELETE SET NULL,
     date TEXT NOT NULL,
     note TEXT DEFAULT '',
     category TEXT DEFAULT '',
@@ -466,404 +438,6 @@ const INIT_TABLES_SQL = `
   );
 `;
 
-// ===== 兼容性迁移函数 =====
-
-async function ensureOwnerColumns(): Promise<void> {
-  const tables: string[] = ['customers', 'products', 'inventory', 'contracts', 'employees', 'work_hours', 'salaries', 'transactions', 'settings', 'categories', 'expense_items', 'expense_types'];
-  for (const t of tables) {
-    try {
-      await query(`ALTER TABLE ${t} ADD COLUMN owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE`);
-    } catch (e: unknown) {
-      if (!/already exists/i.test((e as Error).message || '')) throw e;
-    }
-  }
-}
-
-async function ensureInventoryColumns(): Promise<void> {
-  for (const col of ['created_at', 'updated_at']) {
-    try {
-      await query(`ALTER TABLE inventory ADD COLUMN ${col} TIMESTAMPTZ DEFAULT NOW()`);
-    } catch (e: unknown) {
-      if (!/already exists/i.test((e as Error).message || '')) throw e;
-    }
-  }
-}
-
-async function ensureTransactionCategoryColumn(): Promise<void> {
-  try {
-    await query("ALTER TABLE transactions ADD COLUMN category TEXT DEFAULT ''");
-  } catch (e: unknown) {
-    if (!/already exists/i.test((e as Error).message || '')) throw e;
-  }
-}
-
-async function ensureExpenseItemNoteColumn(): Promise<void> {
-  try {
-    await query("ALTER TABLE expense_items ADD COLUMN note TEXT DEFAULT ''");
-  } catch (e: unknown) {
-    if (!/already exists/i.test((e as Error).message || '')) throw e;
-  }
-}
-
-async function ensureEmployeeStatusColumns(): Promise<void> {
-  try {
-    await query("ALTER TABLE employees ADD COLUMN status TEXT DEFAULT 'active'");
-  } catch (e: unknown) {
-    if (!/already exists/i.test((e as Error).message || '')) throw e;
-  }
-  try {
-    await query("ALTER TABLE employees ADD COLUMN leave_date TEXT DEFAULT ''");
-  } catch (e: unknown) {
-    if (!/already exists/i.test((e as Error).message || '')) throw e;
-  }
-}
-
-async function ensureEmployeeStatusHistoryColumns(): Promise<void> {
-  for (const col of [
-    "ADD COLUMN change_type TEXT DEFAULT ''",
-    "ADD COLUMN position TEXT DEFAULT ''",
-    "ADD COLUMN hourly_rate REAL DEFAULT 0",
-  ]) {
-    try {
-      await query(`ALTER TABLE employee_status_history ${col}`);
-    } catch (e: unknown) {
-      if (!/already exists/i.test((e as Error).message || '')) throw e;
-    }
-  }
-}
-
-async function ensureEmployeeStatusHistoryBackfill(): Promise<void> {
-  try {
-    const owners = await queryAll('SELECT DISTINCT owner_id FROM employees WHERE owner_id IS NOT NULL');
-    for (const row of owners) {
-      const owner_id = row.owner_id as number;
-      const emps = await queryAll(
-        `SELECT id, status, leave_date, join_date, position, hourly_rate, created_at
-         FROM employees
-         WHERE owner_id=$1
-           AND id NOT IN (SELECT DISTINCT employee_id FROM employee_status_history WHERE owner_id=$1)`,
-        [owner_id]
-      );
-      for (const emp of emps) {
-        const start = (emp.join_date as string) || (emp.created_at ? String(emp.created_at).slice(0, 10) : '2000-01-01');
-        await query(
-          'INSERT INTO employee_status_history(employee_id,status,change_type,position,hourly_rate,changed_date,note,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-          [emp.id, 'active', '入职', (emp.position as string) || '', (emp.hourly_rate as number) || 0, start, '系统自动补全入职状态', owner_id]
-        );
-        if (((emp.status as string) || 'active') === 'left' && emp.leave_date) {
-          await query(
-            'INSERT INTO employee_status_history(employee_id,status,change_type,position,hourly_rate,changed_date,note,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-            [emp.id, 'left', '离职', '', 0, emp.leave_date as string, '系统自动补全离职状态', owner_id]
-          );
-        }
-      }
-
-      const broken = await queryAll(
-        `SELECT h.id, h.employee_id, h.status, h.changed_date, e.position AS emp_position, e.hourly_rate AS emp_rate
-         FROM employee_status_history h
-         JOIN employees e ON e.id = h.employee_id
-         WHERE h.owner_id=$1 AND (h.change_type IS NULL OR h.change_type='')`,
-        [owner_id]
-      );
-      const byEmp: Record<number, Record<string, unknown>[]> = {};
-      for (const row of broken) {
-        (byEmp[row.employee_id as number] = byEmp[row.employee_id as number] || []).push(row);
-      }
-      for (const empIdStr of Object.keys(byEmp)) {
-        const empId = Number(empIdStr);
-        const seq = byEmp[empId].sort((a, b) => {
-          const aDate = a.changed_date as string;
-          const bDate = b.changed_date as string;
-          if (aDate < bDate) return -1;
-          if (aDate > bDate) return 1;
-          return (a.id as number) - (b.id as number);
-        });
-        for (let idx = 0; idx < seq.length; idx++) {
-          const row = seq[idx];
-          let ct: string;
-          if (idx === 0) ct = '入职';
-          else ct = (row.status as string) === 'left' ? '离职' : '复职';
-          const pos = (row.status as string) === 'left' ? '' : ((seq[0].emp_position as string) || '');
-          const rate = (row.status as string) === 'left' ? 0 : ((seq[0].emp_rate as number) || 0);
-          await query(
-            'UPDATE employee_status_history SET change_type=$1, position=$2, hourly_rate=$3 WHERE id=$4',
-            [ct, pos, rate, row.id]
-          );
-        }
-      }
-    }
-    console.log('[DB] 员工状态历史回填完成');
-  } catch (e: unknown) {
-    console.error('[DB] 状态历史回填跳过:', (e as Error).message);
-  }
-}
-
-async function ensureDefaultCategoriesForAll(): Promise<void> {
-  const users = await queryAll('SELECT id FROM users');
-  for (const u of users) {
-    let added = 0;
-    for (const [l1, l2] of DEFAULT_CATEGORIES) {
-      const exists = await queryOne(
-        'SELECT 1 FROM categories WHERE owner_id=$1 AND level1=$2 AND level2=$3 LIMIT 1',
-        [u.id, l1, l2]
-      );
-      if (!exists) {
-        await query('INSERT INTO categories(owner_id,level1,level2) VALUES($1,$2,$3)', [u.id, l1, l2]);
-        added++;
-      }
-    }
-    if (added > 0) console.log(`[DB] 账号 ${u.id} 补全预设分类 ${added} 条`);
-  }
-}
-
-async function ensureExpenseItemsForAll(): Promise<void> {
-  const users = await queryAll('SELECT id FROM users');
-  for (const u of users) {
-    let added = 0;
-    for (const [kind, name] of DEFAULT_EXPENSE_ITEMS) {
-      const exists = await queryOne(
-        'SELECT 1 FROM expense_items WHERE owner_id=$1 AND kind=$2 AND name=$3 LIMIT 1',
-        [u.id, kind, name]
-      );
-      if (!exists) {
-        await query('INSERT INTO expense_items(owner_id,kind,name) VALUES($1,$2,$3)', [u.id, kind, name]);
-        added++;
-      }
-    }
-    if (added > 0) console.log(`[DB] 账号 ${u.id} 补全支出项预设 ${added} 条`);
-  }
-}
-
-async function ensureExpenseTypesForAll(): Promise<void> {
-  const users = await queryAll('SELECT id FROM users');
-  for (const u of users) {
-    let added = 0;
-    for (const [name, direction, lc, lp, lcat] of DEFAULT_EXPENSE_TYPES) {
-      const exists = await queryOne(
-        'SELECT 1 FROM expense_types WHERE owner_id=$1 AND name=$2 AND direction=$3 LIMIT 1',
-        [u.id, name, direction]
-      );
-      if (!exists) {
-        await query(
-          'INSERT INTO expense_types(owner_id,name,direction,link_customer,link_product,link_cat,enabled) VALUES($1,$2,$3,$4,$5,$6,$7)',
-          [u.id, name, direction, lc, lp, lcat, true]
-        );
-        added++;
-      }
-    }
-    if (added > 0) console.log(`[DB] 账号 ${u.id} 补全收支类型预设 ${added} 条`);
-  }
-}
-
-async function migrateTaxExpenseTypeLinkage(): Promise<void> {
-  try {
-    const r = await query(
-      "UPDATE expense_types SET link_customer=FALSE, link_product=FALSE WHERE name='税金' AND direction='expense' AND (link_customer=TRUE OR link_product=TRUE) RETURNING id"
-    );
-    const n: number = r.rows ? r.rows.length : 0;
-    if (n > 0) console.log(`[DB] 税金联动规则迁移：修正 ${n} 条`);
-  } catch (e: unknown) {
-    console.error('[DB] migrateTaxExpenseTypeLinkage 失败:', (e as Error).message);
-  }
-}
-
-async function ensureUserCompanyNameColumn(): Promise<void> {
-  try {
-    await query("ALTER TABLE users ADD COLUMN company_name TEXT NOT NULL DEFAULT ''");
-  } catch (e: unknown) {
-    if (!/already exists/i.test((e as Error).message || '')) throw e;
-  }
-  try {
-    await query("UPDATE users SET company_name='系统默认企业' WHERE username='admin' AND company_name=''");
-  } catch (e: unknown) { throw e; }
-}
-
-async function ensureContractUpgradeColumns(): Promise<void> {
-  try {
-    await query(`CREATE TABLE IF NOT EXISTS services (
-      id SERIAL PRIMARY KEY, name TEXT NOT NULL, reference_cost REAL DEFAULT 0, note TEXT DEFAULT '',
-      owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE, created_at TIMESTAMPTZ DEFAULT NOW())`);
-  } catch (e: unknown) { console.error('[DB] services 建表跳过:', (e as Error).message); }
-  try {
-    await query(`CREATE TABLE IF NOT EXISTS contract_items (
-      id SERIAL PRIMARY KEY, contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
-      product_id INTEGER REFERENCES products(id) ON DELETE SET NULL, quantity REAL DEFAULT 0,
-      actual_price REAL DEFAULT 0, amount REAL DEFAULT 0, owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE)`);
-  } catch (e: unknown) { console.error('[DB] contract_items 建表跳过:', (e as Error).message); }
-  try {
-    await query(`CREATE TABLE IF NOT EXISTS contract_services (
-      id SERIAL PRIMARY KEY, contract_id INTEGER REFERENCES contracts(id) ON DELETE CASCADE,
-      service_id INTEGER REFERENCES services(id) ON DELETE SET NULL, service_name TEXT DEFAULT '',
-      amount REAL DEFAULT 0, owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE)`);
-  } catch (e: unknown) { console.error('[DB] contract_services 建表跳过:', (e as Error).message); }
-  try {
-    await query('ALTER TABLE transactions ADD COLUMN contract_id INTEGER REFERENCES contracts(id) ON DELETE SET NULL');
-  } catch (e: unknown) { if (!/already exists/i.test((e as Error).message || '')) throw e; }
-  try { await query("ALTER TABLE contracts ADD COLUMN date TEXT DEFAULT ''"); }
-  catch (e: unknown) { if (!/already exists/i.test((e as Error).message || '')) throw e; }
-  try { await query("ALTER TABLE contracts ADD COLUMN direction TEXT DEFAULT 'sale'"); }
-  catch (e: unknown) { if (!/already exists/i.test((e as Error).message || '')) throw e; }
-  try { await query("UPDATE contracts SET date=start_date WHERE date IS NULL OR date=''"); }
-  catch (e: unknown) { console.error('[DB] contracts.date 兜底跳过:', (e as Error).message); }
-}
-
-async function fixOrphanedOwners(): Promise<void> {
-  const admin = await queryOne("SELECT id FROM users WHERE username='admin'") as UserRow | null;
-  if (!admin) return;
-  // 仅修复指向「不存在用户」的悬空 owner_id，绝不强行改写已有的合法归属，避免破坏真实多用户数据
-  const tables: string[] = ['customers', 'products', 'inventory', 'contracts', 'employees', 'work_hours', 'salaries', 'transactions', 'categories', 'expense_items'];
-  for (const t of tables) {
-    try {
-      await query(`UPDATE ${assertTable(t)} SET owner_id=$1 WHERE owner_id IS NOT NULL AND owner_id NOT IN (SELECT id FROM users)`, [admin.id]);
-    } catch (e: unknown) {
-      console.error('[DB] fixOrphanedOwners 失败(' + t + '):', (e as Error).message);
-    }
-  }
-}
-
-async function fixSettingsPkey(): Promise<void> {
-  try { await query('ALTER TABLE settings DROP CONSTRAINT settings_pkey'); }
-  catch (e: unknown) { if (!/does not exist/i.test((e as Error).message || '')) throw e; }
-  try { await query('ALTER TABLE settings ADD PRIMARY KEY(owner_id, key)'); }
-  catch (e: unknown) { if (!/already exists/i.test((e as Error).message || '')) throw e; }
-}
-
-async function migrateLegacyData(): Promise<void> {
-  const chk = await query('SELECT COUNT(*) AS c FROM transactions WHERE owner_id IS NULL');
-  if (!chk.rows[0] || parseInt(String(chk.rows[0].c), 10) === 0) return;
-  const admin = await queryOne("SELECT id FROM users WHERE username='admin'") as UserRow | null;
-  const editor = await queryOne("SELECT id FROM users WHERE username='editor'") as UserRow | null;
-  if (admin) {
-    const tables: string[] = ['customers', 'products', 'inventory', 'contracts', 'employees', 'work_hours', 'salaries', 'transactions', 'settings', 'categories', 'expense_items'];
-    for (const t of tables) {
-      await query(`UPDATE ${assertTable(t)} SET owner_id=$1 WHERE owner_id IS NULL`, [admin.id]);
-    }
-  }
-  await fixSettingsPkey();
-  if (editor) {
-    const ec = await queryOne('SELECT COUNT(*) AS c FROM customers WHERE owner_id=$1', [editor.id]);
-    if (!ec || parseInt(String(ec.c), 10) === 0) await seedForUser(editor.id, 'full');
-  }
-}
-
-async function seedForUser(uid: number, mode: 'full' | 'sample'): Promise<void> {
-  const full: boolean = mode === 'full';
-  const today: Date = new Date();
-  const d = (n: number): string => {
-    const dt = new Date(today); dt.setDate(dt.getDate() - n);
-    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-  };
-  const futureD = (n: number): string => {
-    const dt = new Date(today); dt.setDate(dt.getDate() + n);
-    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-  };
-
-  const settingsRows: [string, string][] = [['amoeba_enabled', 'true'], ['currency', '¥'], ['export_format', 'csv'], ['units', '["全公司","销售部","生产部","行政部"]']];
-  for (const [k, v] of settingsRows) {
-    await query('INSERT INTO settings(owner_id,key,value) VALUES($1,$2,$3)', [uid, k, v]);
-  }
-  for (const [l1, l2] of DEFAULT_CATEGORIES) {
-    await query('INSERT INTO categories(owner_id,level1,level2) VALUES($1,$2,$3)', [uid, l1, l2]);
-  }
-  for (const [kind, name] of DEFAULT_EXPENSE_ITEMS) {
-    await query('INSERT INTO expense_items(owner_id,kind,name) VALUES($1,$2,$3)', [uid, kind, name]);
-  }
-  for (const [name, direction, lc, lp, lcat] of DEFAULT_EXPENSE_TYPES) {
-    await query(
-      'INSERT INTO expense_types(owner_id,name,direction,link_customer,link_product,link_cat,enabled) VALUES($1,$2,$3,$4,$5,$6,$7)',
-      [uid, name, direction, lc, lp, lcat, true]
-    );
-  }
-
-  const customers: [string, string, string, string][] = full
-    ? [['张三面料厂', '公司', '138-0000-0001', '绍兴柯桥'], ['李四成衣店', '个人', '139-0000-0002', '杭州四季青'], ['王五贸易行', '公司', '137-0000-0003', '广州白马']]
-    : [['示例客户甲', '公司', '138-0000-1001', '上海'], ['示例客户乙', '个人', '139-0000-1002', '杭州'], ['示例客户丙', '公司', '137-0000-1003', '广州']];
-  const custIds: number[] = [];
-  for (const [name, type, contact, address] of customers) {
-    const r = await insertReturning('INSERT INTO customers(name,type,contact,address,owner_id) VALUES($1,$2,$3,$4,$5) RETURNING id', [name, type, contact, address, uid]);
-    custIds.push(r.rows[0].id as number);
-  }
-  const [c1, c2, c3] = custIds;
-
-  const products: [string, string, string, string, string, number, number, number, number][] = full
-    ? [['纯棉T恤', '棉尚', '件', '上衣', '短袖', 25, 69, 320, 25], ['牛仔长裤', '酷牛', '件', '裤子', '牛仔裤', 45, 129, 150, 45], ['针织卫衣', '暖绒', '件', '上衣', '卫衣', 38, 99, 80, 38], ['修身风衣', '风行', '件', '外套', '风衣', 80, 259, 40, 80], ['帆布腰带', '皮革记', '件', '配饰', '皮带', 8, 29, 200, 8]]
-    : [['纯棉T恤', '棉尚', '件', '上衣', '短袖', 25, 69, 120, 25], ['牛仔长裤', '酷牛', '件', '裤子', '牛仔裤', 45, 129, 60, 45], ['针织卫衣', '暖绒', '件', '上衣', '卫衣', 38, 99, 40, 38]];
-  for (const [name, brand, unit, cat1, cat2, pp, sp, qty, ap] of products) {
-    const r = await insertReturning('INSERT INTO products(name,brand,unit,category1,category2,purchase_price,sale_price,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id', [name, brand, unit, cat1, cat2, pp, sp, uid]);
-    await query('INSERT INTO inventory(product_id,quantity,avg_price,owner_id) VALUES($1,$2,$3,$4)', [r.rows[0].id, qty, ap, uid]);
-  }
-
-  if (!full) {
-    const txns: [number, string, string, number | null, null, string, string][] = [
-      [1280, '销售收入', '全公司', c1, null, d(2), '示例销售尾款'],
-      [-8500, '材料采购', '生产部', c2, null, d(3), '示例面料采购'],
-      [-120, '杂费支出', '全公司', null, null, d(4), '示例快递费'],
-    ];
-    for (const [amount, type, unit, cid, pid, date, note] of txns) {
-      await query('INSERT INTO transactions(amount,type,unit,customer_id,product_id,date,note,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)', [amount, type, unit, cid, pid, date, note, uid]);
-    }
-    return;
-  }
-
-  const ym: string = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
-  const contracts: [string, number, number, string, string, string][] = [
-    ['HT-2026-001', c1, 12000, '进行中', d(28), futureD(20)],
-    ['HT-2026-002', c2, 8500, '进行中', d(25), futureD(15)],
-    ['HT-2026-003', c3, 15000, '进行中', d(20), futureD(10)],
-  ];
-  for (const [no, cid, amt, st, sd, ed] of contracts) {
-    await query('INSERT INTO contracts(contract_no,customer_id,amount,status,start_date,end_date,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7)', [no, cid, amt, st, sd, ed, uid]);
-  }
-
-  const svcSeed: [string, number, string][] = [['染色服务', 2.5, '按米计费的染色加工'], ['设计打样', 60, '款式设计打样'], ['物流配送', 8, '同城配送费']];
-  const svcIds: number[] = [];
-  for (const [nm, rc, nt] of svcSeed) {
-    const r = await insertReturning('INSERT INTO services(name,reference_cost,note,owner_id) VALUES($1,$2,$3,$4) RETURNING id', [nm, rc, nt, uid]);
-    svcIds.push(r.rows[0].id as number);
-  }
-
-  const firstC = await queryOne('SELECT id FROM contracts WHERE owner_id=$1 ORDER BY id ASC LIMIT 1', [uid]);
-  if (firstC) {
-    await query("UPDATE contracts SET direction='sale', date=start_date, contract_no='' WHERE id=$1", [firstC.id]);
-    await query(
-      'INSERT INTO contract_items(contract_id,product_id,quantity,actual_price,amount,owner_id) SELECT $1, id, 100, 69, 6900, $2 FROM products WHERE owner_id=$2 AND name=$3 LIMIT 1',
-      [firstC.id, uid, '纯棉T恤']
-    );
-    await query('INSERT INTO contract_services(contract_id,service_id,service_name,amount,owner_id) VALUES($1,$2,$3,$4,$5)',
-      [firstC.id, svcIds[0], '染色服务', 250, uid]);
-    const sumI = await queryOne('SELECT COALESCE(SUM(amount),0) AS s FROM contract_items WHERE contract_id=$1 AND owner_id=$2', [firstC.id, uid]);
-    const sumS = await queryOne('SELECT COALESCE(SUM(amount),0) AS s FROM contract_services WHERE contract_id=$1 AND owner_id=$2', [firstC.id, uid]);
-    await query('UPDATE contracts SET amount=$1 WHERE id=$2', [Number((sumI?.s as number) || 0) + Number((sumS?.s as number) || 0), firstC.id]);
-  }
-
-  const employees: [string, string, number, string][] = [['张师傅', '裁剪工', 35, '2024-03-01'], ['李师傅', '缝纫工', 30, '2024-05-15'], ['王小妹', '包装工', 25, '2025-01-10'], ['赵主管', '管理员', 45, '2023-06-01']];
-  const empIds: number[] = [];
-  for (const [name, pos, rate, jd] of employees) {
-    const r = await insertReturning('INSERT INTO employees(name,position,hourly_rate,join_date,owner_id) VALUES($1,$2,$3,$4,$5) RETURNING id', [name, pos, rate, jd, uid]);
-    empIds.push(r.rows[0].id as number);
-  }
-  const hours: number[] = [80, 90, 70, 80];
-  for (let i = 0; i < empIds.length; i++) {
-    await query('INSERT INTO work_hours(employee_id,hours,month,owner_id) VALUES($1,$2,$3,$4)', [empIds[i], hours[i], ym, uid]);
-  }
-
-  const txns: [number, string, string, number | null, null, string, string][] = [
-    [1280, '销售收入', '全公司', c1, null, d(2), '面料订单尾款'],
-    [4500, '销售收入', '销售部', c2, null, d(5), '成衣批发'],
-    [3200, '销售收入', '销售部', c3, null, d(8), '贸易出货'],
-    [800, '现金收入', '全公司', null, null, d(10), '零散零售'],
-    [2600, '其他收入', '全公司', null, null, d(15), '利息收入'],
-    [-8500, '材料采购', '生产部', c1, null, d(3), '本月面料采购'],
-    [-3200, '委托加工', '生产部', null, null, d(6), '外发染色加工'],
-    [-120, '杂费支出', '全公司', null, null, d(4), '顺丰快递'],
-    [-380, '杂费支出', '行政部', null, null, d(18), '办公用品'],
-    [-5200, '税金', '全公司', null, null, d(1), '增值税'],
-  ];
-  for (const [amount, type, unit, cid, pid, date, note] of txns) {
-    await query('INSERT INTO transactions(amount,type,unit,customer_id,product_id,date,note,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)', [amount, type, unit, cid, pid, date, note, uid]);
-  }
-}
-
 async function init(): Promise<void> {
   const errors: string[] = [];
   // 单步容错：任一迁移失败仅记录并继续，避免后续关键步骤（含种子账号）被跳过
@@ -882,44 +456,8 @@ async function init(): Promise<void> {
       }
     }
 
-    await step('ensureOwnerColumns', ensureOwnerColumns);
-    await step('ensureInventoryColumns', ensureInventoryColumns);
-    await step('ensureTransactionCategoryColumn', ensureTransactionCategoryColumn);
-    await step('ensureExpenseItemNoteColumn', ensureExpenseItemNoteColumn);
-    await step('ensureEmployeeStatusColumns', ensureEmployeeStatusColumns);
-    await step('ensureEmployeeStatusHistoryColumns', ensureEmployeeStatusHistoryColumns);
-    await step('ensureEmployeeStatusHistoryBackfill', ensureEmployeeStatusHistoryBackfill);
-    await step('migrateLegacyData', migrateLegacyData);
-    await step('ensureDefaultCategoriesForAll', ensureDefaultCategoriesForAll);
-    await step('ensureExpenseItemsForAll', ensureExpenseItemsForAll);
-    await step('ensureExpenseTypesForAll', ensureExpenseTypesForAll);
-    await step('migrateTaxExpenseTypeLinkage', migrateTaxExpenseTypeLinkage);
-    await step('ensureUserCompanyNameColumn', ensureUserCompanyNameColumn);
-    await step('ensureContractUpgradeColumns', ensureContractUpgradeColumns);
-
     // 创建种子账号：独立容错，确保即使上述迁移有残留问题也能创建账号，避免首次启动无法登录
-    await step('seedAccounts', async () => {
-      const r = await query('SELECT COUNT(*) AS c FROM users');
-      const count: number = r.rows[0] ? parseInt(String(r.rows[0].c), 10) : 0;
-      if (count === 0) {
-        console.log('[DB] 首次启动，创建种子账号与示例数据...');
-        const adminHash: string = bcrypt.hashSync('admin123', 10);
-        const editorHash: string = bcrypt.hashSync('editor123', 10);
-        await query(
-          'INSERT INTO users(username, password_hash, display_name, role) VALUES($1,$2,$3,$4),($5,$6,$7,$8)',
-          ['admin', adminHash, '系统管理员', 'admin', 'editor', editorHash, '数据录入员', 'admin']
-        );
-        const admin = await queryOne("SELECT id FROM users WHERE username='admin'") as UserRow | null;
-        const editor = await queryOne("SELECT id FROM users WHERE username='editor'") as UserRow | null;
-        if (admin) await seedForUser(admin.id, 'full');
-        if (editor) await seedForUser(editor.id, 'full');
-        console.log('[DB] 种子账号与示例数据初始化完成');
-      } else {
-        console.log('[DB] 数据库已存在账号，跳过账号创建（示例数据按 owner 隔离）');
-      }
-    });
-
-    await step('fixOrphanedOwners', fixOrphanedOwners);
+    await step('seedAccounts', seedAccounts);
 
     if (errors.length === 0) {
       setDbStatus(true);
@@ -935,4 +473,4 @@ async function init(): Promise<void> {
 
 const getDiag = diag;
 
-export { pool, query, queryOne, queryAll, insertReturning, init, getStatus, getDiag, seedForUser };
+export { pool, query, queryOne, queryAll, insertReturning, init, getStatus, getDiag };

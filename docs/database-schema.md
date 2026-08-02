@@ -17,7 +17,7 @@
 | `password_hash` | TEXT | NOT NULL | bcrypt 哈希后的密码（10 轮盐） |
 | `display_name` | TEXT | DEFAULT '' | 显示名（如"系统管理员"） |
 | `role` | TEXT | DEFAULT 'viewer' | 角色标记；当前业务中所有登录用户均视为 admin，仅作历史保留 |
-| `company_name` | TEXT | NOT NULL DEFAULT '' | 账号绑定的唯一企业名称（老库通过 `ensureUserCompanyNameColumn` 补列） |
+| `company_name` | TEXT | NOT NULL DEFAULT '' | 账号绑定的唯一企业名称 |
 | `created_at` | TIMESTAMPTZ | DEFAULT NOW() | 创建时间 |
 
 ---
@@ -73,7 +73,7 @@
 | `quantity` | REAL | DEFAULT 0 | 库存数量 |
 | `avg_price` | REAL | DEFAULT 0 | 移动加权平均价（用于成本核算） |
 | `owner_id` | INTEGER | REFERENCES users(id) ON DELETE CASCADE | 归属账号 |
-| `created_at` | TIMESTAMPTZ | DEFAULT NOW() | 创建时间（老库 `ensureInventoryColumns` 补列） |
+| `created_at` | TIMESTAMPTZ | DEFAULT NOW() | 创建时间 |
 | `updated_at` | TIMESTAMPTZ | DEFAULT NOW() | 最后编辑时间，库存变动时刷新 |
 
 ---
@@ -94,8 +94,8 @@
 | `note` | TEXT | DEFAULT '' | 备注 |
 | `owner_id` | INTEGER | REFERENCES users(id) ON DELETE CASCADE | 归属账号 |
 | `created_at` | TIMESTAMPTZ | DEFAULT NOW() | 创建时间 |
-| `date` | TEXT | DEFAULT '' | 签订日，用于拼接合同名（`ensureContractUpgradeColumns` 补列；老合同用 `start_date` 兜底） |
-| `direction` | TEXT | DEFAULT 'sale' | 方向：`sale` 销售 / `purchase` 采购（`ensureContractUpgradeColumns` 补列） |
+| `date` | TEXT | DEFAULT '' | 签订日，用于拼接合同名（老合同用 `start_date` 兜底） |
+| `direction` | TEXT | DEFAULT 'sale' | 方向：`sale` 销售 / `purchase` 采购 |
 
 ---
 
@@ -158,8 +158,8 @@
 | `join_date` | TEXT | DEFAULT '' | 入职日期（YYYY-MM-DD） |
 | `owner_id` | INTEGER | REFERENCES users(id) ON DELETE CASCADE | 归属账号 |
 | `created_at` | TIMESTAMPTZ | DEFAULT NOW() | 创建时间 |
-| `status` | TEXT | DEFAULT 'active' | 在职状态：`active` 在职 / `left` 离职（`ensureEmployeeStatusColumns` 补列） |
-| `leave_date` | TEXT | DEFAULT '' | 离职日期（`ensureEmployeeStatusColumns` 补列；在职时为空） |
+| `status` | TEXT | DEFAULT 'active' | 在职状态：`active` 在职 / `left` 离职 |
+| `leave_date` | TEXT | DEFAULT '' | 离职日期（在职时为空） |
 
 ---
 
@@ -172,7 +172,7 @@
 | `id` | SERIAL | PRIMARY KEY | 主键 |
 | `employee_id` | INTEGER | REFERENCES employees(id) ON DELETE CASCADE | 关联员工 |
 | `status` | TEXT | NOT NULL | 变更后状态：`active` / `left` |
-| `change_type` | TEXT | DEFAULT '' | 变更类型：`入职` / `离职` / `复职`（`ensureEmployeeStatusHistoryColumns` 补列） |
+| `change_type` | TEXT | DEFAULT '' | 变更类型：`入职` / `离职` / `复职` |
 | `position` | TEXT | DEFAULT '' | 变更后岗位快照（离职则为空） |
 | `hourly_rate` | REAL | DEFAULT 0 | 变更后时薪快照（离职则为 0） |
 | `changed_date` | TEXT | NOT NULL | 变更登记日期（YYYY-MM-DD） |
@@ -227,10 +227,10 @@
 | `product_id` | INTEGER | REFERENCES products(id) ON DELETE SET NULL | 关联商品 |
 | `date` | TEXT | NOT NULL | 发生日期（YYYY-MM-DD） |
 | `note` | TEXT | DEFAULT '' | 备注 |
-| `category` | TEXT | DEFAULT '' | 支出项细分：委托加工类别 / 杂费类别（`ensureTransactionCategoryColumn` 补列） |
+| `category` | TEXT | DEFAULT '' | 支出项细分：委托加工类别 / 杂费类别 |
 | `owner_id` | INTEGER | REFERENCES users(id) ON DELETE CASCADE | 归属账号 |
 | `created_at` | TIMESTAMPTZ | DEFAULT NOW() | 创建时间 |
-| `contract_id` | INTEGER | REFERENCES contracts(id) ON DELETE SET NULL | 关联合同（`ensureContractUpgradeColumns` 补列，批4 录入使用） |
+| `contract_id` | INTEGER | REFERENCES contracts(id) ON DELETE SET NULL | 关联合同（批4 录入使用） |
 
 > 商品分析（`/analysis/product-sales`、`/analysis/product-purchase`）基于本表的 `type` + `amount` + `product_id` 聚合，数量与价格变动则走 `contract_items`。
 
@@ -271,7 +271,7 @@
 | `id` | SERIAL | PRIMARY KEY | 主键 |
 | `kind` | TEXT | NOT NULL | 类别：`processing` 委托加工 / `misc` 杂费 |
 | `name` | TEXT | NOT NULL | 细分名称（如"染色费"/"培训费"） |
-| `note` | TEXT | DEFAULT '' | 备注（`ensureExpenseItemNoteColumn` 补列） |
+| `note` | TEXT | DEFAULT '' | 备注 |
 | `owner_id` | INTEGER | REFERENCES users(id) ON DELETE CASCADE | 归属账号 |
 
 > 预设项（`DEFAULT_EXPENSE_ITEMS`）会为每个账号逐条补全，不删除用户自定义项。
@@ -320,18 +320,13 @@ users
 
 ## 初始化与迁移流程（`db.init`）
 
-1. **建表**：执行 `INIT_TABLES_SQL`（17 张表，逐条幂等创建）
-2. **补列迁移**（老库兼容，均幂等）：
-   - `ensureOwnerColumns`：业务表补 `owner_id`
-   - `ensureInventoryColumns`：`inventory` 补 `created_at`/`updated_at`
-   - `ensureTransactionCategoryColumn`：`transactions` 补 `category`
-   - `ensureExpenseItemNoteColumn`：`expense_items` 补 `note`
-   - `ensureEmployeeStatusColumns`：`employees` 补 `status`/`leave_date`
-   - `ensureEmployeeStatusHistoryColumns`：`employee_status_history` 补 `change_type`/`position`/`hourly_rate`
+1. **建表**：执行 `INIT_TABLES_SQL`（17 张表，含所有列定义，逐条幂等创建）
+2. **数据回填与迁移**：
    - `ensureEmployeeStatusHistoryBackfill`：老员工状态历史回填
-   - `ensureUserCompanyNameColumn`：`users` 补 `company_name`
-   - `ensureContractUpgradeColumns`：建 `services`/`contract_items`/`contract_services`，`transactions` 补 `contract_id`，`contracts` 补 `date`/`direction`
-3. **数据迁移**：`migrateLegacyData`（无主数据归 admin，editor 重新生成）→ `fixSettingsPkey`（改复合主键）
-4. **预设补全**：分类 / 支出项 / 收支类型 逐账号补全；税金联动规则修正
+   - `migrateLegacyData`：无主数据归 admin，editor 重新生成种子数据
+   - `fixSettingsPkey`：改复合主键
+3. **预设补全**：分类 / 支出项 / 收支类型 逐账号补全；税金联动规则修正
+4. **兜底修正**：`contracts.date` 从 `start_date` 回填
 5. **种子账号**：无用户时创建 `admin`/`editor`，各生成完整示例（`seedForUser(uid, 'full')`）
-6. **修复孤立归属**：`fixOrphanedOwners` 把 `owner_id` 指向不存在用户的数据归回 admin
+6. **admin 企业名回填**：为 admin 设置默认企业名
+7. **修复孤立归属**：`fixOrphanedOwners` 把 `owner_id` 指向不存在用户的数据归回 admin

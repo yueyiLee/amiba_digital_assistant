@@ -19,6 +19,7 @@
  */
 import express, { Router, Request, Response } from 'express';
 import * as db from '../db';
+import { seedForUser } from '../seed';
 import { requireAuth } from '../middleware/auth';
 import { ok, failErr } from './lib/helpers';
 
@@ -62,7 +63,7 @@ router.post('/init/sample', async (req: Request, res: Response) => {
     await db.query('DELETE FROM employees WHERE owner_id=$1', [uid]);
     await db.query('DELETE FROM categories WHERE owner_id=$1', [uid]);
     await db.query('DELETE FROM settings WHERE owner_id=$1', [uid]);
-    await db.seedForUser(uid, 'full');
+    await seedForUser(uid, 'full');
     ok(res, { success: true, message: '示例数据已重置' });
   } catch (e: unknown) { failErr(res, e); }
 });
