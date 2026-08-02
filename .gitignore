@@ -40,6 +40,9 @@ test_server.js
 .env.*
 *.local
 
+# TypeScript 编译输出
+dist/
+
 # 构建缓存
 *.tsbuildinfo
 .npm
@@ -47,3 +50,5 @@ test_server.js
 # 日志
 *.log
 npm-debug.log*
+
+.rules/

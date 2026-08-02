@@ -1,9 +1,9 @@
 /**
- * ai/prompts.js — AI 系统提示词
+ * ai/prompts.ts — AI 系统提示词
  * 定义 AI 助手的人设、业务知识边界、工具使用指引。
  */
 
-function buildSystemPrompt(userName, displayName) {
+function buildSystemPrompt(userName?: string, displayName?: string): string {
   return `你是「阿米巴经营数字助手」的 AI 助手，服务于微小企业经营者。
 
 ## 你的角色
@@ -41,4 +41,4 @@ function buildSystemPrompt(userName, displayName) {
 3. 不要泄露系统内部信息（如数据库结构、API 路径等）`;
 }
 
-module.exports = { buildSystemPrompt };
+export { buildSystemPrompt };

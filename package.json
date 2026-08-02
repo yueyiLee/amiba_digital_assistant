@@ -2,10 +2,12 @@
   "name": "amoeba-operating-assistant",
   "version": "1.1.0",
   "description": "阿米巴经营数字助手 - 面向微小企业的阿米巴经营数据记录与分析 Web 应用（PostgreSQL 版）",
-  "main": "server.js",
+  "main": "dist/server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "build": "tsc && node -e \"const fs=require('fs');const p=require('path');const src=p.join(__dirname,'public');const dst=p.join(__dirname,'dist','public');if(!fs.existsSync(dst)){fs.cpSync(src,dst,{recursive:true})}\"",
+    "start": "node dist/server.js",
+    "dev": "tsx watch server.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@cloudbase/manager-node": "^5.4.0",
@@ -18,6 +20,14 @@
     "pg": "^8.13.1"
   },
   "devDependencies": {
-    "@cloudbase/framework-plugin-container": "^1.9.7"
+    "@cloudbase/framework-plugin-container": "^1.9.7",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^26.1.2",
+    "@types/pg": "^8.20.3",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
   }
 }

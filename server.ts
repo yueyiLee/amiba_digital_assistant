@@ -1,25 +1,27 @@
 /**
- * server.js — 阿米巴经营数字助手 Express 主服务
+ * server.ts — 阿米巴经营数字助手 Express 主服务
  * 技术栈：Node.js + Express + PostgreSQL（pg 连接池）
  * 认证：JWT 身份认证 + 用户管理
  */
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
-const db = require('./db');
-const authRoutes = require('./routes/auth');
-const userRoutes = require('./routes/users');
-const businessRoutes = require('./routes/index');
-const exchangeRoutes = require('./routes/exchange');
-const aiRoutes = require('./routes/ai');
-const apiClient = require('./ai/api-client');
+import dotenv from 'dotenv';
+dotenv.config();
 
-const app = express();
+import express, { Express, Request, Response, NextFunction } from 'express';
+import cors from 'cors';
+import path from 'path';
+import * as db from './db';
+import authRoutes from './routes/auth';
+import userRoutes from './routes/users';
+import businessRoutes from './routes/index';
+import exchangeRoutes from './routes/exchange';
+import aiRoutes from './routes/ai';
+import * as apiClient from './ai/api-client';
+
+const app: Express = express();
 
 // 注入 Express app 到 AI apiClient（工具通过它调用已有 RESTful API）
 apiClient.setApp(app);
-const PORT = process.env.PORT || 3000;
+const PORT: number = parseInt(process.env.PORT || '3000', 10);
 
 // 中间件
 app.use(cors());
@@ -30,13 +32,13 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 健康检查（无需认证，需在业务路由前注册）
-app.get('/api/health', (req, res) => {
+app.get('/api/health', (_req: Request, res: Response) => {
   const s = (db.getStatus ? db.getStatus() : { ready: false, error: null });
   res.json({
     status: s.ready ? 'ok' : (s.error ? 'degraded' : 'starting'),
     time: new Date().toISOString(),
     db: s,
-    diag: db.getDiag ? db.getDiag() : null
+    diag: db.getDiag ? db.getDiag() : null,
   });
 });
 
@@ -50,27 +52,28 @@ app.use('/api', businessRoutes);
 app.use('/api/ai', aiRoutes);
 
 // SPA 兜底：非 API 请求返回 index.html
-app.get('*', (req, res) => {
+app.get('*', (req: Request, res: Response) => {
   if (req.path.startsWith('/api/')) {
-    return res.status(404).json({ error: '接口不存在' });
+    res.status(404).json({ error: '接口不存在' });
+    return;
   }
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // 全局错误处理
-app.use((err, req, res, next) => {
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error('[ERROR]', err.message);
   res.status(500).json({ error: err.message || '服务器内部错误' });
 });
 
 // 启动：先监听端口（保证 SCF HTTP 探测不会因 9000 无监听而返回 443），再后台初始化数据库
-function start() {
+function start(): void {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n  ◎ 阿米巴经营数字助手 已启动（PostgreSQL）`);
     console.log(`  → 监听: http://0.0.0.0:${PORT}\n`);
   });
   // 后台初始化；失败时仅记录，不退出进程（避免端口 9000 无监听导致 443）
-  db.init().catch((e) => console.error('[启动] db.init 异常:', e.message));
+  db.init().catch((e: Error) => console.error('[启动] db.init 异常:', e.message));
 }
 
 start();
