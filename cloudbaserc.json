@@ -1,39 +1,6 @@
 {
   "envId": "amiba-d3gk34ae899822073",
-  "framework": {
-    "name": "amoeba-app",
-    "plugins": {
-      "server": {
-        "use": "@cloudbase/framework-plugin-container",
-        "inputs": {
-          "serviceName": "amoba-prod",
-          "servicePath": "/",
-          "localPath": "./",
-          "uploadType": "package",
-          "containerPort": 3000,
-          "dockerfilePath": "./Dockerfile",
-          "mode": "low-cost",
-          "cpu": 0.25,
-          "mem": 0.5,
-          "minNum": 0,
-          "maxNum": 10,
-          "envVariables": {
-            "PG_HOST": "sh-postgres-j1pteg94.sql.tencentcdb.com",
-            "PG_PORT": "25458",
-            "PG_DATABASE": "postgres",
-            "PG_USER": "amoeba",
-            "PG_PASSWORD": "{{env.PG_PASSWORD}}",
-            "LLM_API_KEY": "{{env.LLM_API_KEY}}",
-            "LLM_BASE_URL": "https://api.deepseek.com",
-            "LLM_MODEL": "deepseek-v4-flash",
-            "TZ": "Asia/Shanghai",
-            "NODE_ENV": "production",
-            "PORT": "3000"
-          }
-        }
-      }
-    }
-  },
+  "version": "2.0",
   "cloudrun": {
     "name": "amoba-prod"
   }
