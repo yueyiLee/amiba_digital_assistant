@@ -1,11 +1,11 @@
 /**
- * routes/auth.ts — 认证路由：登录 / 当前用户 / 修改密码（PostgreSQL 版）
+ * routes/auth.ts — 认证路由：登录 / 当前用户 / 修改密码（Drizzle ORM 版）
  */
 import express, { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import * as db from '../db';
+import { getDb } from '../drizzle/db.js';
+import { findUserByUsername, findUserById, updatePassword } from '../drizzle/queries/auth.queries.js';
 import { signToken, requireAuth } from '../middleware/auth';
-import type { UserRow } from '../types/db';
 
 const router: Router = express.Router();
 
@@ -17,13 +17,13 @@ router.post('/login', async (req: Request, res: Response) => {
       res.status(400).json({ error: '请输入用户名和密码' });
       return;
     }
-    const user = await db.queryOne('SELECT * FROM users WHERE username = $1', [username]) as UserRow | null;
+    const user = await findUserByUsername(getDb(), username);
     if (!user) {
       req.log.warn({ username }, '登录失败：用户不存在');
       res.status(401).json({ error: '用户名或密码错误' });
       return;
     }
-    if (!bcrypt.compareSync(password, user.password_hash)) {
+    if (!bcrypt.compareSync(password, user.passwordHash)) {
       req.log.warn({ username, userId: user.id }, '登录失败：密码错误');
       res.status(401).json({ error: '用户名或密码错误' });
       return;
@@ -32,13 +32,13 @@ router.post('/login', async (req: Request, res: Response) => {
       id: user.id,
       username: user.username,
       role: 'admin',
-      display_name: user.display_name,
-      company_name: user.company_name || '',
+      display_name: user.displayName || '',
+      company_name: user.companyName || '',
     });
     req.log.info({ username, userId: user.id }, '用户登录成功');
     res.json({
       token,
-      user: { id: user.id, username: user.username, display_name: user.display_name, company_name: user.company_name || '', role: 'admin' },
+      user: { id: user.id, username: user.username, display_name: user.displayName || '', company_name: user.companyName || '', role: 'admin' },
     });
   } catch (e: unknown) {
     req.log.error({ err: e }, '登录处理异常');
@@ -63,14 +63,14 @@ router.put('/password', requireAuth, async (req: Request, res: Response) => {
       res.status(400).json({ error: '新密码至少 6 位' });
       return;
     }
-    const user = await db.queryOne('SELECT * FROM users WHERE id = $1', [req.user!.id]) as UserRow | null;
-    if (!user || !bcrypt.compareSync(oldPassword, user.password_hash)) {
+    const user = await findUserById(getDb(), req.user!.id);
+    if (!user || !bcrypt.compareSync(oldPassword, user.passwordHash)) {
       req.log.warn({ userId: req.user!.id }, '密码修改失败：原密码错误');
       res.status(400).json({ error: '原密码错误' });
       return;
     }
     const hash: string = bcrypt.hashSync(newPassword, 10);
-    await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user!.id]);
+    await updatePassword(getDb(), req.user!.id, hash);
     req.log.info({ userId: req.user!.id }, '密码修改成功');
     res.json({ success: true, message: '密码修改成功' });
   } catch (e: unknown) {

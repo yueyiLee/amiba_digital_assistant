@@ -1,8 +1,19 @@
 /**
- * routes/transactions.ts — 收支流水、支出项预设、收支类型
+ * routes/transactions.ts — 收支流水、支出项预设、收支类型（Drizzle ORM 版）
  */
 import express, { Router, Request, Response } from 'express';
-import * as db from '../db';
+import { getDb } from '../drizzle/db.js';
+import {
+  listTransactions, findTransactionById, createTransaction,
+  updateTransaction, deleteTransaction, getContractDisplayNames,
+  listExpenseItems, findExpenseItemByKindName, findExpenseItemById,
+  createExpenseItem, updateExpenseItem, deleteExpenseItem,
+  listExpenseTypes, findExpenseTypeById, findExpenseTypeByNameDir,
+  createExpenseType, updateExpenseType, deleteExpenseType,
+} from '../drizzle/queries/transactions.queries.js';
+import { findCustomerById } from '../drizzle/queries/customers.queries.js';
+import { findProductById } from '../drizzle/queries/products.queries.js';
+import { findContractById } from '../drizzle/queries/contracts.queries.js';
 import { ok, fail400, fail404, failErr } from './lib/helpers';
 
 const router: Router = express.Router();
@@ -11,40 +22,16 @@ const router: Router = express.Router();
 router.get('/transactions', async (req: Request, res: Response) => {
   try {
     const { unit, type, startDate, endDate } = req.query as Record<string, string | undefined>;
-    let sql = 'SELECT t.*, c.name AS customer_name, p.name AS product_name FROM transactions t LEFT JOIN customers c ON t.customer_id=c.id LEFT JOIN products p ON t.product_id=p.id WHERE t.owner_id=$1';
-    const params: unknown[] = [req.user!.id];
-    let pi = 1;
-    if (unit && unit !== '全部单元') { params.push(unit); sql += ` AND t.unit=$${++pi}`; }
-    if (type) { params.push(type); sql += ` AND t.type=$${++pi}`; }
-    if (startDate) { params.push(startDate); sql += ` AND t.date>=$${++pi}`; }
-    if (endDate) { params.push(endDate); sql += ` AND t.date<=$${++pi}`; }
-    sql += ' ORDER BY t.date DESC, t.id DESC';
-    const rows = await db.queryAll(sql, params);
-    const cids = [...new Set(rows.map((r) => r.contract_id).filter(Boolean))] as number[];
-    const nameMap: Record<number, { display_name: string; direction: string }> = {};
+    const rows = await listTransactions(getDb(), req.user!.id, { unit, type, startDate, endDate });
+    const cids = [...new Set(rows.map((r) => r.contractId).filter(Boolean))] as number[];
+    let nameMap: Record<number, { display_name: string; direction: string }> = {};
     if (cids.length) {
-      const cons = await db.queryAll(
-        `SELECT co.id, co.date, co.direction, cu.name AS customer_name,
-        (SELECT COALESCE(string_agg(p.name, ','), '') FROM contract_items ci LEFT JOIN products p ON ci.product_id=p.id WHERE ci.contract_id=co.id) AS prod_names,
-        (SELECT COALESCE(string_agg(cs.service_name, ','), '') FROM contract_services cs WHERE cs.contract_id=co.id) AS svc_names
-        FROM contracts co LEFT JOIN customers cu ON co.customer_id=cu.id WHERE co.id = ANY($1::int[])`,
-        [cids]
-      );
-      cons.forEach((co) => {
-        const names: string[] = [];
-        if (co.prod_names) (co.prod_names as string).split(',').forEach((n: string) => n && names.push(n));
-        if (co.svc_names) (co.svc_names as string).split(',').forEach((n: string) => n && names.push(n));
-        const d: string = (co.date as string) || '';
-        const display_name: string = names.length
-          ? `${d}-${(co.customer_name as string) || '—'}-${names[0]}${names.length > 1 ? '等' : ''}`
-          : `${d}-${(co.customer_name as string) || '—'}`;
-        nameMap[co.id as number] = { display_name, direction: co.direction as string };
-      });
+      nameMap = await getContractDisplayNames(getDb(), cids);
     }
     const out = rows.map((r) => ({
       ...r,
-      contract_display_name: r.contract_id ? (nameMap[r.contract_id as number] ? nameMap[r.contract_id as number].display_name : null) : null,
-      contract_direction: r.contract_id ? (nameMap[r.contract_id as number] ? nameMap[r.contract_id as number].direction : null) : null,
+      contract_display_name: r.contractId ? (nameMap[r.contractId] ? nameMap[r.contractId].display_name : null) : null,
+      contract_direction: r.contractId ? (nameMap[r.contractId] ? nameMap[r.contractId].direction : null) : null,
     }));
     ok(res, out);
   } catch (e: unknown) { failErr(res, e); }
@@ -54,72 +41,76 @@ router.post('/transactions', async (req: Request, res: Response) => {
   try {
     const { amount, type, unit, date, customer_id, product_id, note, category, contract_id } = (req.body || {}) as Record<string, unknown>;
     if (amount == null || !type || !date) { fail400(res, '缺少必要字段（金额/类型/日期）'); return; }
+    const db = getDb();
     if (customer_id) {
-      const c = await db.queryOne('SELECT 1 FROM customers WHERE id=$1 AND owner_id=$2', [customer_id as number, req.user!.id]);
+      const c = await findCustomerById(db, customer_id as number, req.user!.id);
       if (!c) { fail400(res, '客户不存在或无权访问'); return; }
     }
     if (product_id) {
-      const p = await db.queryOne('SELECT 1 FROM products WHERE id=$1 AND owner_id=$2', [product_id as number, req.user!.id]);
+      const p = await findProductById(db, product_id as number, req.user!.id);
       if (!p) { fail400(res, '商品不存在或无权访问'); return; }
     }
     if (contract_id) {
-      const co = await db.queryOne('SELECT 1 FROM contracts WHERE id=$1 AND owner_id=$2', [contract_id as number, req.user!.id]);
+      const co = await findContractById(db, contract_id as number, req.user!.id);
       if (!co) { fail400(res, '合同不存在或无权访问'); return; }
     }
-    const result = await db.insertReturning(
-      'INSERT INTO transactions(amount,type,unit,customer_id,product_id,date,note,category,contract_id,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
-      [amount, type, (unit as string) || '全公司', customer_id || null, product_id || null, date, (note as string) || '', (category as string) || '', contract_id || null, req.user!.id]
-    );
-    ok(res, { id: result.rows[0].id });
+    const result = await createTransaction(db, {
+      amount: amount as number, type: type as string, unit: (unit as string) || '全公司',
+      customerId: (customer_id as number) || null, productId: (product_id as number) || null,
+      contractId: (contract_id as number) || null, date: date as string,
+      note: (note as string) || '', category: (category as string) || '', ownerId: req.user!.id,
+    });
+    ok(res, { id: result[0].id });
   } catch (e: unknown) { failErr(res, e); }
 });
 
 router.put('/transactions/:id', async (req: Request, res: Response) => {
   try {
     const t = (req.body || {}) as Record<string, unknown>;
-    const old = await db.queryOne('SELECT * FROM transactions WHERE id=$1 AND owner_id=$2', [req.params.id, req.user!.id]);
+    const db = getDb();
+    const old = await findTransactionById(db, Number(req.params.id), req.user!.id);
     if (!old) { fail404(res, '记录不存在'); return; }
     if (t.customer_id) {
-      const c = await db.queryOne('SELECT 1 FROM customers WHERE id=$1 AND owner_id=$2', [t.customer_id as number, req.user!.id]);
+      const c = await findCustomerById(db, t.customer_id as number, req.user!.id);
       if (!c) { fail400(res, '客户不存在或无权访问'); return; }
     }
     if (t.product_id) {
-      const p = await db.queryOne('SELECT 1 FROM products WHERE id=$1 AND owner_id=$2', [t.product_id as number, req.user!.id]);
+      const p = await findProductById(db, t.product_id as number, req.user!.id);
       if (!p) { fail400(res, '商品不存在或无权访问'); return; }
     }
     if (t.contract_id) {
-      const co = await db.queryOne('SELECT 1 FROM contracts WHERE id=$1 AND owner_id=$2', [t.contract_id as number, req.user!.id]);
+      const co = await findContractById(db, t.contract_id as number, req.user!.id);
       if (!co) { fail400(res, '合同不存在或无权访问'); return; }
     }
-    const newContract: unknown = t.contract_id === undefined ? old.contract_id : (t.contract_id || null);
-    await db.query(
-      'UPDATE transactions SET amount=$1,type=$2,unit=$3,customer_id=$4,product_id=$5,date=$6,note=$7,category=$8,contract_id=$9 WHERE id=$10 AND owner_id=$11',
-      [(t.amount as number) ?? old.amount, (t.type as string) ?? old.type, (t.unit as string) ?? old.unit,
-      t.customer_id === undefined ? old.customer_id : (t.customer_id || null),
-      t.product_id === undefined ? old.product_id : (t.product_id || null),
-      (t.date as string) ?? old.date, (t.note as string) ?? old.note,
-      t.category === undefined ? old.category : ((t.category as string) || ''),
-      newContract, req.params.id, req.user!.id]
-    );
+    const newContract: unknown = t.contract_id === undefined ? old.contractId : (t.contract_id || null);
+    await updateTransaction(db, Number(req.params.id), req.user!.id, {
+      amount: t.amount !== undefined ? (t.amount as number) : undefined,
+      type: t.type !== undefined ? (t.type as string) : undefined,
+      unit: t.unit !== undefined ? (t.unit as string) : undefined,
+      customerId: t.customer_id === undefined ? undefined : ((t.customer_id as number) || null),
+      productId: t.product_id === undefined ? undefined : ((t.product_id as number) || null),
+      contractId: newContract as number | null | undefined,
+      date: t.date !== undefined ? (t.date as string) : undefined,
+      note: t.note !== undefined ? (t.note as string) : undefined,
+      category: t.category !== undefined ? ((t.category as string) || '') : undefined,
+    });
     ok(res, { success: true });
   } catch (e: unknown) { failErr(res, e); }
 });
 
 router.delete('/transactions/:id', async (req: Request, res: Response) => {
   try {
-    const exist = await db.queryOne('SELECT id FROM transactions WHERE id=$1 AND owner_id=$2', [req.params.id, req.user!.id]);
+    const exist = await findTransactionById(getDb(), Number(req.params.id), req.user!.id);
     if (!exist) { fail404(res, '记录不存在'); return; }
-    await db.query('DELETE FROM transactions WHERE id=$1 AND owner_id=$2', [req.params.id, req.user!.id]);
+    await deleteTransaction(getDb(), Number(req.params.id), req.user!.id);
     ok(res, { success: true });
   } catch (e: unknown) { failErr(res, e); }
 });
 
 /* ========== expense_items 支出项预设 ========== */
 router.get('/expense-items', async (req: Request, res: Response) => {
-  try {
-    const rows = await db.queryAll('SELECT id, kind, name, note FROM expense_items WHERE owner_id=$1 ORDER BY id', [req.user!.id]);
-    ok(res, rows);
-  } catch (e: unknown) { failErr(res, e); }
+  try { ok(res, await listExpenseItems(getDb(), req.user!.id)); }
+  catch (e: unknown) { failErr(res, e); }
 });
 
 router.post('/expense-items', async (req: Request, res: Response) => {
@@ -128,13 +119,12 @@ router.post('/expense-items', async (req: Request, res: Response) => {
     if (!kind || !name || !String(name).trim()) { fail400(res, '缺少必要字段（类型/名称）'); return; }
     const nm: string = String(name).trim();
     const nt: string = note == null ? '' : String(note).trim();
-    const dup = await db.queryOne('SELECT 1 FROM expense_items WHERE owner_id=$1 AND kind=$2 AND name=$3', [req.user!.id, kind, nm]);
+    const dup = await findExpenseItemByKindName(getDb(), req.user!.id, kind as string, nm);
     if (dup) { fail400(res, '该类别已存在'); return; }
-    const result = await db.insertReturning(
-      'INSERT INTO expense_items(owner_id,kind,name,note) VALUES($1,$2,$3,$4) RETURNING id',
-      [req.user!.id, kind, nm, nt]
-    );
-    ok(res, { id: result.rows[0].id });
+    const result = await createExpenseItem(getDb(), {
+      ownerId: req.user!.id, kind: kind as string, name: nm, note: nt,
+    });
+    ok(res, { id: result[0].id });
   } catch (e: unknown) { failErr(res, e); }
 });
 
@@ -142,22 +132,22 @@ router.put('/expense-items/:id', async (req: Request, res: Response) => {
   try {
     const { name, note } = (req.body || {}) as Record<string, unknown>;
     if (!name || !String(name).trim()) { fail400(res, '名称必填'); return; }
-    const old = await db.queryOne('SELECT * FROM expense_items WHERE id=$1 AND owner_id=$2', [req.params.id, req.user!.id]);
+    const old = await findExpenseItemById(getDb(), Number(req.params.id), req.user!.id);
     if (!old) { fail404(res, '类别不存在'); return; }
     const nm: string = String(name).trim();
     const nt: string = note == null ? '' : String(note).trim();
-    const dup = await db.queryOne('SELECT 1 FROM expense_items WHERE owner_id=$1 AND kind=$2 AND name=$3 AND id<>$4', [req.user!.id, old.kind, nm, req.params.id]);
-    if (dup) { fail400(res, '该类别已存在'); return; }
-    await db.query('UPDATE expense_items SET name=$1, note=$2 WHERE id=$3 AND owner_id=$4', [nm, nt, req.params.id, req.user!.id]);
+    const dup = await findExpenseItemByKindName(getDb(), req.user!.id, old.kind, nm);
+    if (dup && dup.id !== Number(req.params.id)) { fail400(res, '该类别已存在'); return; }
+    await updateExpenseItem(getDb(), Number(req.params.id), req.user!.id, { name: nm, note: nt });
     ok(res, { success: true });
   } catch (e: unknown) { failErr(res, e); }
 });
 
 router.delete('/expense-items/:id', async (req: Request, res: Response) => {
   try {
-    const exist = await db.queryOne('SELECT id FROM expense_items WHERE id=$1 AND owner_id=$2', [req.params.id, req.user!.id]);
+    const exist = await findExpenseItemById(getDb(), Number(req.params.id), req.user!.id);
     if (!exist) { fail404(res, '类别不存在'); return; }
-    await db.query('DELETE FROM expense_items WHERE id=$1 AND owner_id=$2', [req.params.id, req.user!.id]);
+    await deleteExpenseItem(getDb(), Number(req.params.id), req.user!.id);
     ok(res, { success: true });
   } catch (e: unknown) { failErr(res, e); }
 });
@@ -166,13 +156,9 @@ router.delete('/expense-items/:id', async (req: Request, res: Response) => {
 router.get('/expense-types', async (req: Request, res: Response) => {
   try {
     const { direction, enabled } = req.query as Record<string, string | undefined>;
-    let sql = 'SELECT id, name, direction, link_customer, link_product, link_cat, enabled FROM expense_types WHERE owner_id=$1';
-    const params: unknown[] = [req.user!.id];
-    if (direction) { params.push(direction); sql += ` AND direction=$${params.length}`; }
-    if (enabled === 'true') { params.push(true); sql += ` AND enabled=$${params.length}`; }
-    sql += ' ORDER BY direction, id';
-    const rows = await db.queryAll(sql, params);
-    ok(res, rows);
+    ok(res, await listExpenseTypes(getDb(), req.user!.id, {
+      direction, enabled: enabled === 'true',
+    }));
   } catch (e: unknown) { failErr(res, e); }
 });
 
@@ -182,13 +168,14 @@ router.post('/expense-types', async (req: Request, res: Response) => {
     if (!name || !String(name).trim()) { fail400(res, '类型名称必填'); return; }
     if (direction !== 'income' && direction !== 'expense') { fail400(res, '方向必须是 income 或 expense'); return; }
     const nm: string = String(name).trim();
-    const dup = await db.queryOne('SELECT 1 FROM expense_types WHERE owner_id=$1 AND name=$2 AND direction=$3', [req.user!.id, nm, direction]);
+    const dup = await findExpenseTypeByNameDir(getDb(), req.user!.id, nm, direction as string);
     if (dup) { fail400(res, '该方向下已存在同名类型'); return; }
-    const result = await db.insertReturning(
-      'INSERT INTO expense_types(owner_id,name,direction,link_customer,link_product,link_cat,enabled) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',
-      [req.user!.id, nm, direction, !!link_customer, !!link_product, (link_cat as string) || '', true]
-    );
-    ok(res, { id: result.rows[0].id });
+    const result = await createExpenseType(getDb(), {
+      ownerId: req.user!.id, name: nm, direction: direction as string,
+      linkCustomer: !!link_customer, linkProduct: !!link_product,
+      linkCat: (link_cat as string) || '',
+    });
+    ok(res, { id: result[0].id });
   } catch (e: unknown) { failErr(res, e); }
 });
 
@@ -196,26 +183,27 @@ router.put('/expense-types/:id', async (req: Request, res: Response) => {
   try {
     const { name, direction, link_customer, link_product, link_cat, enabled } = (req.body || {}) as Record<string, unknown>;
     if (!name || !String(name).trim()) { fail400(res, '类型名称必填'); return; }
-    const old = await db.queryOne('SELECT * FROM expense_types WHERE id=$1 AND owner_id=$2', [req.params.id, req.user!.id]);
+    const old = await findExpenseTypeById(getDb(), Number(req.params.id), req.user!.id);
     if (!old) { fail404(res, '类型不存在'); return; }
     const nm: string = String(name).trim();
-    const dir: string = (direction as string) || (old.direction as string);
+    const dir: string = (direction as string) || old.direction;
     if (dir !== 'income' && dir !== 'expense') { fail400(res, '方向必须是 income 或 expense'); return; }
-    const dup = await db.queryOne('SELECT 1 FROM expense_types WHERE owner_id=$1 AND name=$2 AND direction=$3 AND id<>$4', [req.user!.id, nm, dir, req.params.id]);
-    if (dup) { fail400(res, '该方向下已存在同名类型'); return; }
-    await db.query(
-      'UPDATE expense_types SET name=$1, direction=$2, link_customer=$3, link_product=$4, link_cat=$5, enabled=$6 WHERE id=$7 AND owner_id=$8',
-      [nm, dir, !!link_customer, !!link_product, (link_cat as string) || '', !!enabled, req.params.id, req.user!.id]
-    );
+    const dup = await findExpenseTypeByNameDir(getDb(), req.user!.id, nm, dir);
+    if (dup && dup.id !== Number(req.params.id)) { fail400(res, '该方向下已存在同名类型'); return; }
+    await updateExpenseType(getDb(), Number(req.params.id), req.user!.id, {
+      name: nm, direction: dir, linkCustomer: !!link_customer,
+      linkProduct: !!link_product, linkCat: (link_cat as string) || '',
+      enabled: enabled !== undefined ? !!enabled : undefined,
+    });
     ok(res, { success: true });
   } catch (e: unknown) { failErr(res, e); }
 });
 
 router.delete('/expense-types/:id', async (req: Request, res: Response) => {
   try {
-    const exist = await db.queryOne('SELECT id FROM expense_types WHERE id=$1 AND owner_id=$2', [req.params.id, req.user!.id]);
+    const exist = await findExpenseTypeById(getDb(), Number(req.params.id), req.user!.id);
     if (!exist) { fail404(res, '类型不存在'); return; }
-    await db.query('DELETE FROM expense_types WHERE id=$1 AND owner_id=$2', [req.params.id, req.user!.id]);
+    await deleteExpenseType(getDb(), Number(req.params.id), req.user!.id);
     ok(res, { success: true });
   } catch (e: unknown) { failErr(res, e); }
 });

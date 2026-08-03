@@ -4,7 +4,7 @@
  * 含离线降级：API 不可用时返回内置参考汇率。
  */
 import express, { Router, Request, Response } from 'express';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth } from '../middleware/auth.js';
 
 const router: Router = express.Router();
 

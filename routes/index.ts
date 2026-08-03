@@ -1,24 +1,15 @@
 /**
- * routes/index.ts — 业务 API 路由汇总入口
+ * routes/index.ts — 业务 API 路由汇总入口（Drizzle ORM 版）
  *
- * 将原来的单体大文件拆分为按模块划分的路由文件：
- *   - transactions.ts    收支流水 / 支出项预设 / 收支类型
- *   - products.ts        商品管理
- *   - customers.ts       客户管理
- *   - inventory.ts       库存管理
- *   - settings-categories.ts  设置 / 商品分类
- *   - employees.ts       员工管理
- *   - contracts-services.ts   合同 / 服务
- *   - workhours-salaries.ts   月度工时 / 工资
- *   - analysis.ts        分析驾驶舱 / 客户分析 / 商品分析 / 合同分析 / 费用分析 / 阿米巴核算
- *
- * 本文件保留：
+ * 保留：
  *   - init/sample 重置示例数据
  *   - contracts/suggest 候选合同推荐
  *   - 所有子路由的挂载
  */
 import express, { Router, Request, Response } from 'express';
-import * as db from '../db';
+import { getDb } from '../drizzle/db.js';
+import { deleteAllByOwner } from '../drizzle/queries/transactions.queries.js';
+import { suggestContracts } from '../drizzle/queries/contracts.queries.js';
 import { seedForUser } from '../seed';
 import { requireAuth } from '../middleware/auth';
 import { ok, failErr } from './lib/helpers';
@@ -53,17 +44,7 @@ router.post('/init/sample', async (req: Request, res: Response) => {
   try {
     const uid: number = req.user!.id;
     req.log.info({ userId: uid }, '开始重置示例数据');
-    await db.query('DELETE FROM transactions WHERE owner_id=$1', [uid]);
-    await db.query('DELETE FROM work_hours WHERE owner_id=$1', [uid]);
-    await db.query('DELETE FROM salaries WHERE owner_id=$1', [uid]);
-    await db.query('DELETE FROM contracts WHERE owner_id=$1', [uid]);
-    await db.query('DELETE FROM services WHERE owner_id=$1', [uid]);
-    await db.query('DELETE FROM inventory WHERE owner_id=$1', [uid]);
-    await db.query('DELETE FROM products WHERE owner_id=$1', [uid]);
-    await db.query('DELETE FROM customers WHERE owner_id=$1', [uid]);
-    await db.query('DELETE FROM employees WHERE owner_id=$1', [uid]);
-    await db.query('DELETE FROM categories WHERE owner_id=$1', [uid]);
-    await db.query('DELETE FROM settings WHERE owner_id=$1', [uid]);
+    await deleteAllByOwner(getDb(), uid);
     await seedForUser(uid, 'full');
     req.log.info({ userId: uid }, '示例数据重置完成');
     ok(res, { success: true, message: '示例数据已重置' });
@@ -74,25 +55,19 @@ router.post('/init/sample', async (req: Request, res: Response) => {
 router.get('/contracts/suggest', async (req: Request, res: Response) => {
   try {
     const { direction, customer_id, date } = req.query as Record<string, string | undefined>;
-    let sql = `SELECT co.id, co.date, co.direction, c.name AS customer_name,
-      (SELECT COALESCE(string_agg(p.name, ','), '') FROM contract_items ci LEFT JOIN products p ON ci.product_id=p.id WHERE ci.contract_id=co.id) AS prod_names,
-      (SELECT COALESCE(string_agg(cs.service_name, ','), '') FROM contract_services cs WHERE cs.contract_id=co.id) AS svc_names
-      FROM contracts co LEFT JOIN customers c ON co.customer_id=c.id WHERE co.owner_id=$1`;
-    const params: unknown[] = [req.user!.id];
-    let pi = 1;
-    if (direction) { params.push(direction); sql += ` AND co.direction=$${++pi}`; }
-    if (customer_id) { params.push(customer_id); sql += ` AND co.customer_id=$${++pi}`; }
-    sql += ' ORDER BY co.id DESC';
-    const rows = await db.queryAll(sql, params);
+    const rows = await suggestContracts(getDb(), req.user!.id, {
+      direction: direction as string | undefined,
+      customerId: customer_id ? Number(customer_id) : undefined,
+    });
     const list: Record<string, unknown>[] = rows.map((co) => {
       const names: string[] = [];
-      if (co.prod_names) (co.prod_names as string).split(',').forEach((n: string) => n && names.push(n));
-      if (co.svc_names) (co.svc_names as string).split(',').forEach((n: string) => n && names.push(n));
-      const d: string = (co.date as string) || '';
+      if (co.prodNames) (co.prodNames as string).split(',').forEach((n: string) => n && names.push(n));
+      if (co.svcNames) (co.svcNames as string).split(',').forEach((n: string) => n && names.push(n));
+      const d: string = co.date || '';
       const display_name: string = names.length
-        ? `${d}-${(co.customer_name as string) || '—'}-${names[0]}${names.length > 1 ? '等' : ''}`
-        : `${d}-${(co.customer_name as string) || '—'}`;
-      return { id: co.id, display_name, date: d, direction: co.direction, customer_name: co.customer_name };
+        ? `${d}-${co.customerName || '—'}-${names[0]}${names.length > 1 ? '等' : ''}`
+        : `${d}-${co.customerName || '—'}`;
+      return { id: co.id, display_name, date: d, direction: co.direction, customer_name: co.customerName };
     });
     if (date) {
       list.forEach((x) => {

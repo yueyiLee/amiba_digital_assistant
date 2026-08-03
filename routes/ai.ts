@@ -6,8 +6,8 @@
  * 所有端点需 requireAuth 认证，工具通过用户 JWT 调用已有 RESTful API。
  */
 import express, { Router, Request, Response } from 'express';
-import { requireAuth } from '../middleware/auth';
-import { converse, converseStream } from '../ai/engine';
+import { requireAuth } from '../middleware/auth.js';
+import { converse, converseStream } from '../ai/engine.js';
 
 const router: Router = express.Router();
 

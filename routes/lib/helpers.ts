@@ -2,7 +2,6 @@
  * routes/lib/helpers.ts — 公共响应辅助函数与分析工具函数
  */
 import type { Request, Response } from 'express';
-import * as db from '../../db';
 
 export const ok = (res: Response, data: unknown): void => { res.json(data); };
 export const fail400 = (res: Response, msg: string): void => { res.status(400).json({ error: msg }); };
@@ -49,24 +48,29 @@ export function fmtCny(v: number): string {
   return `¥${Math.round(Number(v) || 0).toLocaleString('en-US')}`;
 }
 
+/**
+ * 商品分析 - 已迁移至 Drizzle ORM
+ * 内部使用 Drizzle 查询替代原来的原生 SQL，返回值结构保持不变。
+ */
 export async function productAnalysis(ownerId: number, direction: string, sd: string, ed: string) {
+  const { getDb } = await import('../../drizzle/db.js');
+  const { getTotalSaleAmount, getProductSaleAgg, getProductPurchaseAgg, getContractItemAgg, getPriceTrend } = await import('../../drizzle/queries/analysis.queries.js');
+  const db = getDb();
+
   const isSale: boolean = direction === 'sale';
-  const totalAmtRow = isSale
-    ? await db.queryOne(`SELECT COALESCE(SUM(amount), 0) AS s FROM transactions WHERE owner_id=$1 AND type='销售收入' AND amount>0 AND date BETWEEN $2 AND $3`, [ownerId, sd, ed])
-    : await db.queryOne(`SELECT COALESCE(SUM(ABS(amount)), 0) AS s FROM transactions WHERE owner_id=$1 AND type='材料采购' AND amount<0 AND date BETWEEN $2 AND $3`, [ownerId, sd, ed]);
-  const totalAmount: number = Number(totalAmtRow && totalAmtRow.s) || 0;
+  const totalAmount: number = await getTotalSaleAmount(db, ownerId, sd, ed, isSale);
 
   const byAmtRows = isSale
-    ? await db.queryAll(`SELECT t.product_id, p.name AS product_name, SUM(t.amount) AS amt FROM transactions t LEFT JOIN products p ON t.product_id = p.id WHERE t.owner_id=$1 AND t.type='销售收入' AND t.amount>0 AND t.product_id IS NOT NULL AND t.date BETWEEN $2 AND $3 GROUP BY t.product_id, p.name ORDER BY amt DESC LIMIT 100`, [ownerId, sd, ed])
-    : await db.queryAll(`SELECT t.product_id, p.name AS product_name, SUM(ABS(t.amount)) AS amt FROM transactions t LEFT JOIN products p ON t.product_id = p.id WHERE t.owner_id=$1 AND t.type='材料采购' AND t.amount<0 AND t.product_id IS NOT NULL AND t.date BETWEEN $2 AND $3 GROUP BY t.product_id, p.name ORDER BY amt DESC LIMIT 100`, [ownerId, sd, ed]);
+    ? await getProductSaleAgg(db, ownerId, sd, ed)
+    : await getProductPurchaseAgg(db, ownerId, sd, ed);
 
-  const qtyRows = await db.queryAll(`SELECT ci.product_id, p.name AS product_name, SUM(ci.quantity) AS qty, SUM(ci.quantity * ci.actual_price) AS amt FROM contract_items ci JOIN contracts co ON ci.contract_id = co.id LEFT JOIN products p ON ci.product_id = p.id WHERE co.owner_id=$1 AND co.direction=$2 AND co.date BETWEEN $3 AND $4 GROUP BY ci.product_id, p.name ORDER BY amt DESC`, [ownerId, direction, sd, ed]);
+  const qtyRows = await getContractItemAgg(db, ownerId, direction, sd, ed);
+  const series = await getPriceTrend(db, ownerId, direction, sd, ed);
 
-  const series = await db.queryAll(`SELECT ci.product_id, p.name AS product_name, co.date, ci.actual_price FROM contract_items ci JOIN contracts co ON ci.contract_id = co.id LEFT JOIN products p ON ci.product_id = p.id WHERE co.owner_id=$1 AND co.direction=$2 AND co.date BETWEEN $3 AND $4 ORDER BY ci.product_id, co.date`, [ownerId, direction, sd, ed]);
   const byPid: Record<number, { date: string; price: number; name: string }[]> = {};
-  series.forEach((s) => {
-    if (s.product_id == null) return;
-    (byPid[s.product_id as number] = byPid[s.product_id as number] || []).push({ date: s.date as string, price: Number(s.actual_price) || 0, name: s.product_name as string });
+  series.forEach((s: { productId: number | null; date: string | null; actualPrice: number | null; productName: string | null }) => {
+    if (s.productId == null) return;
+    (byPid[s.productId] = byPid[s.productId] || []).push({ date: (s.date as string) || '', price: Number(s.actualPrice) || 0, name: (s.productName as string) || '' });
   });
   const priceChange = Object.values(byPid).map((arr) => {
     const prices: number[] = arr.map((x) => x.price).filter((v) => v > 0);
@@ -76,24 +80,23 @@ export async function productAnalysis(ownerId: number, direction: string, sd: st
     return { product_name: arr[0].name, change, min, max, samples: arr.length };
   }).filter(Boolean).sort((a, b) => (b as { change: number }).change - (a as { change: number }).change).slice(0, 5);
 
-  const costRow = await db.queryOne(`SELECT COALESCE(SUM(ABS(amount)), 0) AS c FROM transactions WHERE owner_id=$1 AND type='材料采购' AND amount<0 AND date BETWEEN $2 AND $3`, [ownerId, sd, ed]);
-  const totalCost: number = Number(costRow && costRow.c) || 0;
-  const totalQty: number = qtyRows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
+  const totalCost: number = isSale ? await getTotalSaleAmount(db, ownerId, sd, ed, false) : totalAmount;
+  const totalQty: number = qtyRows.reduce((s: number, r: { qty: number }) => s + (Number(r.qty) || 0), 0);
   const avgGm: number = isSale && totalAmount > 0 ? Math.max(0, (totalAmount - totalCost) / totalAmount) : 0;
 
   let costByPid: Record<number, number> = {};
   if (isSale) {
-    const costByPidRows = await db.queryAll(`SELECT product_id, SUM(ABS(amount)) AS cost FROM transactions WHERE owner_id=$1 AND type='材料采购' AND amount<0 AND product_id IS NOT NULL AND date BETWEEN $2 AND $3 GROUP BY product_id`, [ownerId, sd, ed]);
-    costByPidRows.forEach((r) => { costByPid[r.product_id as number] = Number(r.cost) || 0; });
+    const costByPidRows = await getProductPurchaseAgg(db, ownerId, sd, ed);
+    costByPidRows.forEach((r: { productId: number | null; amt: number }) => { if (r.productId != null) costByPid[r.productId] = Number(r.amt) || 0; });
   }
 
-  const byQty = qtyRows.slice().sort((a, b) => Number(b.qty) - Number(a.qty)).slice(0, 5)
-    .map((r) => ({ product_id: r.product_id, product_name: r.product_name, total_qty: Number(r.qty) || 0, total_amount: Number(r.amt) || 0 }));
-  const byAmount = byAmtRows.slice(0, 5).map((r) => {
+  const byQty = qtyRows.slice().sort((a: { qty: number }, b: { qty: number }) => Number(b.qty) - Number(a.qty)).slice(0, 5)
+    .map((r: { productId: number | null; productName: string | null; qty: number; amt: number }) => ({ product_id: r.productId, product_name: r.productName, total_qty: Number(r.qty) || 0, total_amount: Number(r.amt) || 0 }));
+  const byAmount = byAmtRows.slice(0, 5).map((r: { productId: number | null; productName: string | null; amt: number }) => {
     const sale: number = Number(r.amt) || 0;
-    const cost: number = isSale ? (costByPid[r.product_id as number] || 0) : 0;
+    const cost: number = isSale ? (costByPid[r.productId as number] || 0) : 0;
     const gm: number = isSale && sale > 0 ? Math.max(0, (sale - cost) / sale) : 0;
-    return { product_id: r.product_id, product_name: r.product_name, total_amount: sale, cost, gm };
+    return { product_id: r.productId, product_name: r.productName, total_amount: sale, cost, gm };
   });
   return { total_sale: totalAmount, total_cost: isSale ? totalCost : totalAmount, total_qty: totalQty, avg_gm: avgGm, by_qty: byQty, by_amount: byAmount, price_change: priceChange };
 }

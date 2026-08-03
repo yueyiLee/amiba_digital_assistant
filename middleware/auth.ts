@@ -67,13 +67,16 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
   }
 }
 
+/**
+ * @deprecated 数据隔离已按 owner_id 实现，所有登录用户均放行，无需角色校验。
+ * 保留仅用于向后兼容，新代码请直接使用 requireAuth。
+ */
 function requireRole(..._roles: string[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.user) {
       res.status(401).json({ error: '未登录' });
       return;
     }
-    // 数据隔离已按 owner_id 实现，不再区分角色，所有登录用户均放行
     next();
   };
 }

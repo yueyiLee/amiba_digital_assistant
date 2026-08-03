@@ -22,6 +22,7 @@
   "include": [
     "server.ts",
     "db.ts",
+    "drizzle/**/*.ts",
     "middleware/**/*.ts",
     "routes/**/*.ts",
     "ai/**/*.ts",

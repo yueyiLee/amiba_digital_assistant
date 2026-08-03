@@ -3,11 +3,15 @@
  *
  * 统一使用 pg 原生连接池直连 PostgreSQL（本地与云端部署通用）。
  * 对上层暴露的接口（query / queryOne / queryAll / insertReturning / init）保持不变。
+ *
+ * 自 v1.2 起，init() 会优先通过 Drizzle ORM 迁移系统建表，
+ * 同时保留 INIT_TABLES_SQL 作为降级后备（Drizzle 迁移不可用时回退）。
  */
 import { Pool, QueryResult as PgQueryResult } from 'pg';
 import type { DbStatus, DiagResult, QueryResult } from './types/db';
 import { seedAccounts } from './seed';
 import { rootLogger } from './logger';
+import { initDrizzleDb } from './drizzle/db.js';
 
 // ===== 初始化状态（供 /api/health 暴露）=====
 let dbReady = false;
@@ -23,7 +27,7 @@ function getStatus(): DbStatus {
 // 诊断信息：暴露容器内关键环境变量是否存在（不暴露取值），便于排查连接问题
 function diag(): DiagResult {
   return {
-    mode: 'native-pg',
+    mode: 'native-pg+drizzle',
     hasNativePgConfig: !!(process.env.DATABASE_URL || process.env.PG_HOST || process.env.PG_DATABASE),
     poolConnected: pool.totalCount > 0,
   };
@@ -277,16 +281,34 @@ async function init(): Promise<void> {
   };
 
   try {
-    const stmts: string[] = INIT_TABLES_SQL.split(';').map((s) => s.trim()).filter(Boolean);
-    for (const st of stmts) {
+    // 1. 初始化 Drizzle 实例（基于 pg Pool）
+    initDrizzleDb(getPool());
+
+    // 2. 优先使用 Drizzle 迁移系统建表
+    try {
+      const { runMigrations } = await import('./drizzle/migrate.js');
+      await runMigrations(getPool());
+      rootLogger.info('Drizzle 迁移执行完成');
+    } catch (e: unknown) {
+      rootLogger.warn({ err: e }, 'Drizzle 迁移失败，回退到 INIT_TABLES_SQL 建表');
+      // 降级：使用原有 SQL 建表方式，包裹在事务中确保原子性
+      const stmts: string[] = INIT_TABLES_SQL.split(';').map((s) => s.trim()).filter(Boolean);
+      const client = await getPool().connect();
       try {
-        await query(st);
-      } catch (e: unknown) {
-        rootLogger.warn({ stmt: st.slice(0, 50).replace(/\s+/g, ' '), err: e }, 'DB 建表语句跳过');
+        await client.query('BEGIN');
+        for (const st of stmts) {
+          await client.query(st);
+        }
+        await client.query('COMMIT');
+      } catch (e2: unknown) {
+        try { await client.query('ROLLBACK'); } catch { /* ignore rollback error */ }
+        rootLogger.warn({ err: e2 }, 'DB 降级建表事务失败');
+      } finally {
+        client.release();
       }
     }
 
-    // 创建种子账号：独立容错，确保即使上述迁移有残留问题也能创建账号，避免首次启动无法登录
+    // 3. 创建种子账号：独立容错，确保即使上述迁移有残留问题也能创建账号，避免首次启动无法登录
     await step('seedAccounts', seedAccounts);
 
     if (errors.length === 0) {

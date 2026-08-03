@@ -6,21 +6,21 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { ensureJwtSecret } from './middleware/auth';
+import { ensureJwtSecret } from './middleware/auth.js';
 // 启动期校验：JWT_SECRET 缺失则明确拒绝启动（保留 I1 安全语义，且 dotenv 已加载）
 ensureJwtSecret();
 
 import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import path from 'path';
-import * as db from './db';
-import authRoutes from './routes/auth';
-import userRoutes from './routes/users';
-import businessRoutes from './routes/index';
-import exchangeRoutes from './routes/exchange';
-import aiRoutes from './routes/ai';
-import * as apiClient from './ai/api-client';
-import { rootLogger, requestLogger } from './logger';
+import * as db from './db.js';
+import authRoutes from './routes/auth.js';
+import userRoutes from './routes/users.js';
+import businessRoutes from './routes/index.js';
+import exchangeRoutes from './routes/exchange.js';
+import aiRoutes from './routes/ai.js';
+import * as apiClient from './ai/api-client.js';
+import { rootLogger, requestLogger } from './logger.js';
 
 const app: Express = express();
 
@@ -71,6 +71,16 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   req.log.error({ err }, '未捕获的服务器错误');
   const isProduction: boolean = process.env.NODE_ENV === 'production';
   res.status(500).json({ error: isProduction ? '服务器内部错误' : (err.message || '服务器内部错误') });
+});
+
+// 全局未捕获异常处理，避免进程因未处理的 Promise rejection 退出
+process.on('unhandledRejection', (reason: unknown) => {
+  rootLogger.error({ err: reason }, 'unhandledRejection');
+});
+process.on('uncaughtException', (err: Error) => {
+  rootLogger.error({ err }, 'uncaughtException');
+  // 严重错误可能需要优雅退出，此处保守地仅记录日志
+  process.exitCode = 1;
 });
 
 // 启动：先监听端口（保证 SCF HTTP 探测不会因 9000 无监听而返回 443），再后台初始化数据库
