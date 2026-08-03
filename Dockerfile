@@ -19,6 +19,7 @@ COPY routes/ ./routes/
 COPY ai/ ./ai/
 COPY types/ ./types/
 COPY public/ ./public/
+COPY drizzle/ ./drizzle/
 RUN npm run build
 
 # ---------- 阶段二：生产 ----------
