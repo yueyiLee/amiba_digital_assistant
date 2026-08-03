@@ -156,8 +156,12 @@ router.delete('/expense-items/:id', async (req: Request, res: Response) => {
 router.get('/expense-types', async (req: Request, res: Response) => {
   try {
     const { direction, enabled } = req.query as Record<string, string | undefined>;
+    let booleanEnabled: boolean | undefined = undefined;
+    if (enabled !== undefined) {
+      booleanEnabled = enabled === 'true';
+    }
     ok(res, await listExpenseTypes(getDb(), req.user!.id, {
-      direction, enabled: enabled === 'true',
+      direction, enabled: booleanEnabled,
     }));
   } catch (e: unknown) { failErr(res, e); }
 });
