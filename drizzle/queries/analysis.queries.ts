@@ -108,7 +108,7 @@ export async function getUnitTop(db: DrizzleDb, ownerId: number, sd: string, ed:
   }).from(transactions)
     .where(where)
     .groupBy(sql`COALESCE(${transactions.unit}, '全公司')`)
-    .orderBy(sql`added_value DESC`)
+    .orderBy(sql`2 DESC`)
     .limit(1);
 }
 
@@ -158,7 +158,7 @@ export async function getCustomerAnalysis(
       between(transactions.date, sd, ed)
     ))
     .groupBy(transactions.customerId, customers.name)
-    .orderBy(sql`sale DESC`);
+    .orderBy(sql`3 DESC`);
 
   return { totalCount, activeCount, recvRow: recvRow[0], custAgg };
 }
@@ -193,7 +193,7 @@ export async function getProductSaleAgg(db: DrizzleDb, ownerId: number, sd: stri
       between(transactions.date, sd, ed)
     ))
     .groupBy(transactions.productId, products.name)
-    .orderBy(sql`amt DESC`)
+    .orderBy(sql`3 DESC`)
     .limit(100);
 }
 
@@ -212,7 +212,7 @@ export async function getProductPurchaseAgg(db: DrizzleDb, ownerId: number, sd: 
       between(transactions.date, sd, ed)
     ))
     .groupBy(transactions.productId, products.name)
-    .orderBy(sql`amt DESC`)
+    .orderBy(sql`3 DESC`)
     .limit(100);
 }
 
@@ -231,7 +231,7 @@ export async function getContractItemAgg(db: DrizzleDb, ownerId: number, directi
       between(contracts.date, sd, ed)
     ))
     .groupBy(contractItems.productId, products.name)
-    .orderBy(sql`amt DESC`);
+    .orderBy(sql`4 DESC`);
 }
 
 export async function getPriceTrend(db: DrizzleDb, ownerId: number, direction: string, sd: string, ed: string) {
@@ -320,7 +320,7 @@ export async function getExpenseCompose(db: DrizzleDb, ownerId: number, sd: stri
       between(transactions.date, sd, ed)
     ))
     .groupBy(transactions.type)
-    .orderBy(sql`amount DESC`);
+    .orderBy(sql`2 DESC`);
 }
 
 export async function getMonthlyExpense(db: DrizzleDb, ownerId: number, ms: string, mEndStr: string) {
@@ -346,7 +346,7 @@ export async function getExpenseByUnit(db: DrizzleDb, ownerId: number, sd: strin
       between(transactions.date, sd, ed)
     ))
     .groupBy(sql`COALESCE(${transactions.unit}, '全公司')`)
-    .orderBy(sql`amount DESC`);
+    .orderBy(sql`2 DESC`);
 }
 
 // ========== 阿米巴核算 ==========
@@ -359,7 +359,7 @@ export async function getUnitAddedValue(db: DrizzleDb, ownerId: number, sd: stri
   }).from(transactions)
     .where(where)
     .groupBy(sql`COALESCE(${transactions.unit}, '全公司')`)
-    .orderBy(sql`added_value DESC`);
+    .orderBy(sql`2 DESC`);
 }
 
 export async function getUnitContribs(db: DrizzleDb, ownerId: number, sd: string, ed: string) {
@@ -372,7 +372,7 @@ export async function getUnitContribs(db: DrizzleDb, ownerId: number, sd: string
   }).from(transactions)
     .where(where)
     .groupBy(sql`COALESCE(${transactions.unit}, '全公司')`)
-    .orderBy(sql`added_value DESC`);
+    .orderBy(sql`4 DESC`);
 }
 
 // ========== 商品分析小程序 ==========
@@ -397,7 +397,7 @@ export async function getProductTop10(db: DrizzleDb, ownerId: number, sd: string
       between(transactions.date, sd, ed)
     ))
     .groupBy(transactions.productId, products.name)
-    .orderBy(sql`sale DESC`)
+    .orderBy(sql`3 DESC`)
     .limit(10);
 }
 
@@ -479,4 +479,53 @@ export async function getTotalSaleAmount(db: DrizzleDb, ownerId: number, sd: str
           between(transactions.date, sd, ed)
         ));
   return Number(rows[0]?.s) || 0;
+}
+
+// ========== 看板 v2 新增查询 ==========
+
+/** 按日聚合收入/支出趋势 */
+export async function getDailyTrend(db: DrizzleDb, ownerId: number, sd: string, ed: string) {
+  return db.select({
+    date: transactions.date,
+    income: sql<number>`COALESCE(SUM(CASE WHEN ${transactions.amount} > 0 THEN ${transactions.amount} ELSE 0 END), 0)`,
+    expense: sql<number>`COALESCE(SUM(CASE WHEN ${transactions.amount} < 0 THEN ABS(${transactions.amount}) ELSE 0 END), 0)`,
+  }).from(transactions)
+    .where(and(
+      eq(transactions.ownerId, ownerId),
+      between(transactions.date, sd, ed)
+    ))
+    .groupBy(transactions.date)
+    .orderBy(transactions.date);
+}
+
+/** 按类型聚合收入构成（销售收入/现金收入/其他收入） */
+export async function getIncomeCompose(db: DrizzleDb, ownerId: number, sd: string, ed: string) {
+  return db.select({
+    name: transactions.type,
+    amount: sql<number>`COALESCE(SUM(${transactions.amount}), 0)`,
+  }).from(transactions)
+    .where(and(
+      eq(transactions.ownerId, ownerId),
+      sql`${transactions.type} IN ('销售收入','现金收入','其他收入')`,
+      sql`${transactions.amount} > 0`,
+      between(transactions.date, sd, ed)
+    ))
+    .groupBy(transactions.type)
+    .orderBy(sql`2 DESC`);
+}
+
+/** 按类型聚合支出构成（材料采购/委托加工/杂费支出/税金） */
+export async function getExpenseComposeByType(db: DrizzleDb, ownerId: number, sd: string, ed: string) {
+  return db.select({
+    name: transactions.type,
+    amount: sql<number>`COALESCE(SUM(ABS(${transactions.amount})), 0)`,
+  }).from(transactions)
+    .where(and(
+      eq(transactions.ownerId, ownerId),
+      sql`${transactions.type} IN ('材料采购','委托加工','杂费支出','税金')`,
+      sql`${transactions.amount} < 0`,
+      between(transactions.date, sd, ed)
+    ))
+    .groupBy(transactions.type)
+    .orderBy(sql`2 DESC`);
 }

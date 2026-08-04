@@ -19,6 +19,7 @@ import {
   getAllProductsWithStock, getProductGmByPids,
   countCustomers, getTotalSaleAmount,
   buildTxFilter,
+  getDailyTrend, getIncomeCompose, getExpenseComposeByType,
 } from '../drizzle/queries/analysis.queries.js';
 import { getInventoryValue } from '../drizzle/queries/inventory.queries.js';
 import { transactions } from '../drizzle/schema/transactions.js';
@@ -480,6 +481,22 @@ router.get('/analysis/amoeba', async (req: Request, res: Response) => {
     const { startDate, endDate } = req.query as Record<string, string | undefined>;
     const sd: string = startDate || '0001-01-01', ed: string = endDate || '9999-12-31';
     ok(res, await amoebaAnalysis(req.user!.id, sd, ed));
+  } catch (e: unknown) { failErr(res, e); }
+});
+
+/* ========== 看板 v2 新增端点 ========== */
+
+router.get('/analysis/daily-trend', async (req: Request, res: Response) => {
+  try {
+    const { startDate, endDate } = req.query as Record<string, string | undefined>;
+    const sd: string = startDate || '0001-01-01', ed: string = endDate || '9999-12-31';
+    const db = getDb();
+    const [trend, incomeCompose, expenseCompose] = await Promise.all([
+      getDailyTrend(db, req.user!.id, sd, ed),
+      getIncomeCompose(db, req.user!.id, sd, ed),
+      getExpenseComposeByType(db, req.user!.id, sd, ed),
+    ]);
+    ok(res, { trend, incomeCompose, expenseCompose });
   } catch (e: unknown) { failErr(res, e); }
 });
 
