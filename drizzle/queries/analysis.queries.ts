@@ -16,6 +16,11 @@ import { employees } from '../schema/employees';
 
 // ========== 工具函数 ==========
 
+/** 收入类交易类型（与 PRD §4.1/§9 口径一致） */
+export const INCOME_TYPES = ['销售收入', '现金收入', '其他收入'];
+/** 支出类交易类型（含「现金支出」独立原始指标，见 PRD §4.1 L440） */
+export const EXPENSE_TYPES = ['材料采购', '委托加工', '杂费支出', '税金', '现金支出'];
+
 /** 构建交易过滤条件 */
 export function buildTxFilter(ownerId: number, sd: string, ed: string, unit?: string | null): {
   where: ReturnType<typeof and>;
@@ -498,7 +503,7 @@ export async function getDailyTrend(db: DrizzleDb, ownerId: number, sd: string, 
     .orderBy(transactions.date);
 }
 
-/** 按类型聚合收入构成（销售收入/现金收入/其他收入） */
+/** 按类型聚合收入构成（销售收入/现金收入/其他收入，含销售退货冲红，口径与 cockpit.addedValue 对齐） */
 export async function getIncomeCompose(db: DrizzleDb, ownerId: number, sd: string, ed: string) {
   return db.select({
     name: transactions.type,
@@ -506,15 +511,14 @@ export async function getIncomeCompose(db: DrizzleDb, ownerId: number, sd: strin
   }).from(transactions)
     .where(and(
       eq(transactions.ownerId, ownerId),
-      sql`${transactions.type} IN ('销售收入','现金收入','其他收入')`,
-      sql`${transactions.amount} > 0`,
+      inArray(transactions.type, INCOME_TYPES),
       between(transactions.date, sd, ed)
     ))
     .groupBy(transactions.type)
     .orderBy(sql`2 DESC`);
 }
 
-/** 按类型聚合支出构成（材料采购/委托加工/杂费支出/税金） */
+/** 按类型聚合支出构成（材料采购/委托加工/杂费支出/税金/现金支出） */
 export async function getExpenseComposeByType(db: DrizzleDb, ownerId: number, sd: string, ed: string) {
   return db.select({
     name: transactions.type,
@@ -522,7 +526,7 @@ export async function getExpenseComposeByType(db: DrizzleDb, ownerId: number, sd
   }).from(transactions)
     .where(and(
       eq(transactions.ownerId, ownerId),
-      sql`${transactions.type} IN ('材料采购','委托加工','杂费支出','税金')`,
+      inArray(transactions.type, EXPENSE_TYPES),
       sql`${transactions.amount} < 0`,
       between(transactions.date, sd, ed)
     ))
