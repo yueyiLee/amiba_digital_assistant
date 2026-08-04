@@ -139,6 +139,159 @@ router.get('/analysis/cockpit', async (req: Request, res: Response) => {
   } catch (e: unknown) { failErr(res, e); }
 });
 
+/* ========== 经营总览（PRD v2.1 §3） ========== */
+interface OverviewAlert {
+  level: 'red' | 'yellow';
+  title: string;
+  sub: string;
+  jump_to: string;
+  jump_key?: string;
+}
+
+interface OverviewTopCustomer {
+  id: number;
+  name: string;
+  sale: number;
+  receivable: number;
+  last_date: string;
+  status: 'normal' | 'late' | 'risk';
+}
+
+interface OverviewTopProduct {
+  name: string;
+  sale: number;
+}
+
+async function overviewAnalysis(ownerId: number, sd: string, ed: string, unit?: string | null) {
+  const db = getDb();
+  const typeRows = await getTypeAggregation(db, ownerId, sd, ed, unit);
+  const raw: Record<string, number> = {};
+  const absAmt: Record<string, number> = {};
+  typeRows.forEach((r) => { raw[r.type] = numOf(r.raw); absAmt[r.type] = numOf(r.absAmt); });
+
+  const salesIncome: number = raw['销售收入'] || 0;
+  const cashIncome: number = raw['现金收入'] || 0;
+  const otherIncome: number = raw['其他收入'] || 0;
+  const totalIncome: number = salesIncome + cashIncome + otherIncome;
+  const materialCost: number = absAmt['材料采购'] || 0;
+  const processCost: number = absAmt['委托加工'] || 0;
+  const consumeCost: number = materialCost + processCost;
+  const miscCost: number = absAmt['杂费支出'] || 0;
+  const taxCost: number = absAmt['税金'] || 0;
+  const receivable: number = salesIncome - cashIncome;
+  const addedValue: number = totalIncome - consumeCost - miscCost;
+  const totalExpense: number = materialCost + processCost + miscCost + taxCost;
+
+  const smk: string = String(sd).slice(0, 7), emk: string = String(ed).slice(0, 7);
+  const salaryRow = await getSalaryHoursAgg(db, ownerId, smk, emk);
+  const totalSalary: number = numOf(salaryRow.salary);
+  const totalHours: number = numOf(salaryRow.hours);
+  const profit: number = addedValue - totalSalary - taxCost;
+  const unitAddedValue: number = totalHours > 0 ? addedValue / totalHours : 0;
+
+  // ---- 预警（PRD v2.1 §3.4） ----
+  const custRows = await getCustomerAgg(db, ownerId, sd, ed, unit);
+  const prodRows = await getProductAgg(db, ownerId, sd, ed, unit);
+  const productMetrics = prodRows.map((r) => {
+    const sale: number = numOf(r.sale), cost: number = numOf(r.cost);
+    return { id: r.productId, name: r.productName, sale, cost, gm: sale > 0 ? (sale - cost) / sale : 0 };
+  });
+
+  const staleRows = await getStaleInventory(db, ownerId);
+  const cashExpense: number = absAmt['现金支出'] || 0;
+  const netCashFlow: number = cashIncome - cashExpense;
+
+  const alerts: OverviewAlert[] = [];
+
+  custRows.forEach((r) => {
+    const recv: number = numOf(r.recv);
+    const name = r.customerName as string;
+    if (recv >= COCKPIT_ALERT_RULES.customerRecvRed) {
+      alerts.push({ level: 'red', title: '客户大额应收', sub: `${name} - ${fmtCny(recv)}`, jump_to: 'customer', jump_key: name });
+    } else if (recv >= COCKPIT_ALERT_RULES.customerRecvYellow) {
+      alerts.push({ level: 'yellow', title: '客户中等应收', sub: `${name} - ${fmtCny(recv)}`, jump_to: 'customer', jump_key: name });
+    }
+  });
+
+  productMetrics.forEach((r) => {
+    if (r.sale > 0 && r.gm < COCKPIT_ALERT_RULES.productMargin) {
+      alerts.push({ level: 'red', title: '商品毛利率过低', sub: `${r.name} - ${(r.gm * 100).toFixed(1)}%`, jump_to: 'product', jump_key: r.name as string });
+    }
+  });
+
+  staleRows.forEach((r) => {
+    const days: number = Math.floor(numOf(r.days));
+    const pname = (r.productName as string) || '未知商品';
+    if (days > COCKPIT_ALERT_RULES.productStockAge) {
+      alerts.push({ level: 'yellow', title: '商品库存呆滞', sub: `${pname} - ${days} 天`, jump_to: 'product', jump_key: pname });
+    }
+  });
+
+  if (netCashFlow < COCKPIT_ALERT_RULES.cashGap) {
+    alerts.push({ level: 'red', title: '净现金流缺口', sub: fmtCny(netCashFlow), jump_to: 'cash' });
+  }
+
+  // 红色优先，同客户去重
+  alerts.sort((a, b) => (a.level === b.level ? 0 : a.level === 'red' ? -1 : 1));
+  const seenNames = new Set<string>();
+  const dedupedAlerts = alerts.filter((a) => {
+    if (a.jump_key && seenNames.has(a.jump_key)) return false;
+    if (a.jump_key) seenNames.add(a.jump_key);
+    return true;
+  });
+
+  // ---- Top 5 客户（PRD v2.1 §3.5） ----
+  const sortedCust = custRows
+    .map((r) => {
+      const recv: number = numOf(r.recv);
+      let status: 'normal' | 'late' | 'risk' = 'normal';
+      if (recv >= COCKPIT_ALERT_RULES.customerRecvRed) status = 'risk';
+      else if (recv >= COCKPIT_ALERT_RULES.customerRecvYellow) status = 'late';
+      return {
+        id: r.customerId as number,
+        name: r.customerName as string,
+        sale: numOf(r.sale),
+        receivable: recv,
+        last_date: (r as any).lastDate || '',
+        status,
+      };
+    })
+    .sort((a, b) => b.receivable - a.receivable)
+    .slice(0, 5);
+
+  // ---- Top 5 商品（PRD v2.1 §3.5） ----
+  const top5Products: OverviewTopProduct[] = productMetrics
+    .sort((a, b) => b.sale - a.sale)
+    .slice(0, 5)
+    .map((r) => ({ name: r.name as string, sale: r.sale }));
+
+  return {
+    kpi: {
+      sales_income: salesIncome,
+      receivable,
+      added_value: addedValue,
+      unit_added_value: unitAddedValue,
+      total_expense: totalExpense,
+      total_profit: profit,
+    },
+    alerts: dedupedAlerts.slice(0, COCKPIT_ALERT_LIMIT),
+    alert_count: {
+      red: dedupedAlerts.filter((a) => a.level === 'red').length,
+      yellow: dedupedAlerts.filter((a) => a.level === 'yellow').length,
+    },
+    top_customers: sortedCust,
+    top_products: top5Products,
+  };
+}
+
+router.get('/analysis/overview', async (req: Request, res: Response) => {
+  try {
+    const { startDate, endDate, unit } = req.query as Record<string, string | undefined>;
+    const sd: string = startDate || '0001-01-01', ed: string = endDate || '9999-12-31';
+    ok(res, await overviewAnalysis(req.user!.id, sd, ed, unit));
+  } catch (e: unknown) { failErr(res, e); }
+});
+
 /* ========== 商品分析（销售/采购） ========== */
 router.get('/analysis/product-sales', async (req: Request, res: Response) => {
   try {
