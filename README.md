@@ -178,7 +178,7 @@ tcb login
 
 ```bash
 # 通过 CloudBase CLI 部署云托管服务
-tcb cloudrun deploy
+tcb cloudrun deploy -e CLOUD_BASE_ENV_ID
 
 # 或通过控制台上传 Dockerfile 源码进行构建部署
 ```

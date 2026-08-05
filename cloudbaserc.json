@@ -1,5 +1,5 @@
 {
-  "envId": "amiba-d3gk34ae899822073",
+  "envId": "CLOUD_BASE_ENV_ID",
   "version": "2.0",
   "cloudrun": {
     "name": "amoba-prod"
