@@ -4,7 +4,6 @@
  */
 import express, { Router, Request, Response } from 'express';
 import { getDb } from '../drizzle/db.js';
-import { sql, inArray, and, eq } from 'drizzle-orm';
 import {
   getTypeAggregation, getSalaryHoursAgg,
   getCustomerAgg, getProductAgg, getStaleInventory, getUnitTop,
@@ -16,7 +15,6 @@ import {
   getDailyTrend, getIncomeCompose, getExpenseComposeByType,
 } from '../drizzle/queries/analysis.queries.js';
 import { getInventoryValue } from '../drizzle/queries/inventory.queries.js';
-import { transactions } from '../drizzle/schema/transactions.js';
 import { ok, failErr, numOf, daysSince, fmtCny, productAnalysis } from './lib/helpers';
 
 const router: Router = express.Router();
@@ -469,51 +467,59 @@ router.get('/analysis/product', async (req: Request, res: Response) => {
   } catch (e: unknown) { failErr(res, e); }
 });
 
-/* ========== 合同分析 ========== */
+/* ========== 合同分析（PRD v2.1 §6） ========== */
+
+/** 根据执行率派生前端状态徽章文本 */
+function deriveContractStatus(ratio: number): string {
+  if (ratio < 0.3) return '回款滞后';
+  if (ratio < 0.7) return '执行中';
+  return '健康';
+}
+
 async function contractAnalysis(ownerId: number, sd: string, ed: string) {
   const db = getDb();
-  const { overview, statusRows, paidRow, contractRows } = await getContractAnalysis(db, ownerId, sd, ed);
+  const { overview, paidRow, contractRows } = await getContractAnalysis(db, ownerId, sd, ed);
 
+  // ---- KPI（3 项） ----
   const totalAmount: number = numOf(overview.totalAmount);
   const totalPaid: number = numOf(paidRow.paid);
-  const executionRate: number = totalAmount > 0 ? totalPaid / totalAmount : 0;
-  const unpaidAmount: number = Math.max(0, totalAmount - totalPaid);
+  const totalUnpaid: number = Math.max(0, totalAmount - totalPaid);
 
-  const statusMap: Record<string, { count: number; amount: number }> = {};
-  statusRows.forEach((r) => { statusMap[r.status || '进行中'] = { count: Number(r.cnt), amount: numOf(r.amt) }; });
-  const inProgress = statusMap['进行中'] || { count: 0, amount: 0 };
-  const completed = statusMap['已完结'] || { count: 0, amount: 0 };
-  const dunning = statusMap['催收中'] || { count: 0, amount: 0 };
-
+  // ---- 各合同回款映射 ----
   const cids: number[] = contractRows.map((r) => r.id);
   const paidMap: Record<number, number> = {};
-  const lastPaidMap: Record<number, string> = {};
 
   if (cids.length > 0) {
     const paidRows = await getContractPayments(db, ownerId, cids, sd, ed);
     paidRows.forEach((r) => { paidMap[r.contractId as number] = numOf(r.paid); });
-
-    // 获取最后支付日期
-    const lastRows = await db.select({
-      contractId: transactions.contractId,
-      lastDate: sql<string>`MAX(${transactions.date})`,
-    }).from(transactions)
-      .where(and(eq(transactions.ownerId, ownerId), inArray(transactions.contractId, cids), sql`${transactions.amount} > 0`))
-      .groupBy(transactions.contractId);
-    lastRows.forEach((r) => { lastPaidMap[r.contractId as number] = r.lastDate; });
   }
 
-  const contractList = contractRows.map((r) => {
+  // ---- 合同明细行（PRD v2.1 §6.1） ----
+  const rows = contractRows.map((r) => {
+    const amount: number = numOf(r.amount);
     const paid: number = paidMap[r.id] || 0;
-    const unpaid: number = Math.max(0, numOf(r.amount) - paid);
-    const lastDate: string = lastPaidMap[r.id] || r.date || '';
-    const ageDays: number = daysSince(lastDate);
-    return { id: r.id, customer_name: r.customerName || '—', date: r.date || '', amount: numOf(r.amount), paid, unpaid, status: r.status || '进行中', age_days: ageDays };
+    const unpaid: number = Math.max(0, amount - paid);
+    const ratio: number = amount > 0 ? Math.min(paid / amount, 1) : 0;
+    const status: string = deriveContractStatus(ratio);
+    // 合同名：优先 contractNo，缺失回退 #合同ID
+    const name: string = (r.contractNo as string)?.trim() || `#合同${r.id}`;
+    return {
+      id: r.id,
+      name,
+      customer: (r.customerName as string) || '—',
+      amount,
+      paid,
+      unpaid,
+      ratio,
+      status,
+      start_date: (r.startDate as string) || '',
+      end_date: (r.endDate as string) || '',
+    };
   });
 
   return {
-    kpi: { total_amount: totalAmount, execution_rate: executionRate, unpaid_amount: unpaidAmount, status_summary: { in_progress: { count: inProgress.count, amount: inProgress.amount }, completed: { count: completed.count, amount: completed.amount }, dunning: { count: dunning.count, amount: dunning.amount } } },
-    contracts: contractList,
+    kpi: { total_amount: totalAmount, total_paid: totalPaid, total_unpaid: totalUnpaid },
+    rows,
   };
 }
 

@@ -285,14 +285,17 @@ export async function getContractAnalysis(db: DrizzleDb, ownerId: number, sd: st
 
   const contractRows = await db.select({
     id: contracts.id,
+    contractNo: contracts.contractNo,
     date: contracts.date,
+    startDate: contracts.startDate,
+    endDate: contracts.endDate,
     status: contracts.status,
     amount: contracts.amount,
     customerName: customers.name,
   }).from(contracts)
     .leftJoin(customers, eq(contracts.customerId, customers.id))
     .where(and(eq(contracts.ownerId, ownerId), between(contracts.date, sd, ed)))
-    .orderBy(sql`${contracts.id} DESC`);
+    .orderBy(sql`${contracts.amount} DESC`);
 
   return { overview: overview[0], statusRows, paidRow: paidRow[0], contractRows };
 }
