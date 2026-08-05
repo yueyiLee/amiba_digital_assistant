@@ -18,6 +18,7 @@ import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
 import businessRoutes from './routes/index.js';
 import exchangeRoutes from './routes/exchange.js';
+import wxRoutes from './routes/wx.js';
 import aiRoutes from './routes/ai.js';
 import * as apiClient from './ai/api-client.js';
 import { rootLogger, requestLogger } from './logger.js';
@@ -52,6 +53,8 @@ app.get('/api/health', (_req: Request, res: Response) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/exchange', exchangeRoutes);
+// 微信 JS-SDK 签名（公开路由，必须挂在含全局 requireAuth 的业务路由之前）
+app.use('/api/wx', wxRoutes);
 app.use('/api', businessRoutes);
 
 // AI 对话路由（需在 businessRoutes 之后，避免 /api/ai 被 /api/* 兜底）
