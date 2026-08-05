@@ -357,6 +357,22 @@ export async function getExpenseByUnit(db: DrizzleDb, ownerId: number, sd: strin
     .orderBy(sql`2 DESC`);
 }
 
+/** 按月 + 交易类型分组聚合支出金额（PRD v2.1 §7 堆叠趋势） */
+export async function getMonthlyExpenseByType(db: DrizzleDb, ownerId: number, sd: string, ed: string) {
+  return db.select({
+    month: sql<string>`TO_CHAR(${transactions.date}::DATE, 'YYYY-MM')`,
+    type: transactions.type,
+    amount: sql<number>`COALESCE(SUM(ABS(${transactions.amount})), 0)`,
+  }).from(transactions)
+    .where(and(
+      eq(transactions.ownerId, ownerId),
+      sql`${transactions.amount} < 0`,
+      between(transactions.date, sd, ed)
+    ))
+    .groupBy(sql`TO_CHAR(${transactions.date}::DATE, 'YYYY-MM')`, transactions.type)
+    .orderBy(sql`1`, transactions.type);
+}
+
 // ========== 阿米巴核算 ==========
 
 export async function getUnitAddedValue(db: DrizzleDb, ownerId: number, sd: string, ed: string) {

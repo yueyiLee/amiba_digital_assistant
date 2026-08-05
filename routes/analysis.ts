@@ -9,7 +9,7 @@ import {
   getCustomerAgg, getProductAgg, getStaleInventory, getUnitTop,
   getCustomerAnalysis, getCustomerLastDates,
   getContractAnalysis, getContractPayments,
-  getExpenseCompose, getMonthlyExpense, getExpenseByUnit,
+  getExpenseCompose, getMonthlyExpenseByType,
   getUnitAddedValue, getUnitContribs,
   getProductDetailRows,
   getDailyTrend, getIncomeCompose, getExpenseComposeByType,
@@ -531,30 +531,70 @@ router.get('/analysis/contract', async (req: Request, res: Response) => {
   } catch (e: unknown) { failErr(res, e); }
 });
 
-/* ========== 费用分析 ========== */
+/* ========== 费用分析（PRD v2.1 §7） ========== */
+
+/** 分类名 → 前端色键映射 */
+const EXPENSE_COLOR_MAP: Record<string, string> = {
+  '材料采购': 'blue',
+  '委托加工': 'orange',
+  '杂费支出': 'purple',
+  '缴纳税金': 'red',
+};
+
 async function expenseAnalysis(ownerId: number, sd: string, ed: string) {
   const db = getDb();
-  const composeRows = await getExpenseCompose(db, ownerId, sd, ed);
-  const compose = composeRows.map((r) => ({ name: r.name, amount: numOf(r.amount) }));
-  const totalExpense: number = compose.reduce((s, r) => s + r.amount, 0);
 
-  const trendData: { month: string; amount: number }[] = [];
-  const endParts: number[] = String(ed).split('-').map(Number);
-  const endYear: number = endParts[0], endMonth: number = endParts[1];
-  for (let i = 5; i >= 0; i--) {
-    const m = new Date(endYear, endMonth - 1 - i, 1);
-    const ms: string = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`;
-    const mEnd = new Date(m.getFullYear(), m.getMonth() + 1, 0);
-    const mEndStr: string = `${mEnd.getFullYear()}-${String(mEnd.getMonth() + 1).padStart(2, '0')}-${String(mEnd.getDate()).padStart(2, '0')}`;
-    const amt = await getMonthlyExpense(db, ownerId, ms + '-01', mEndStr);
-    trendData.push({ month: ms, amount: amt });
-  }
+  // 并行获取构成 + 月度分类趋势
+  const [composeRows, trendRows] = await Promise.all([
+    getExpenseCompose(db, ownerId, sd, ed),
+    getMonthlyExpenseByType(db, ownerId, sd, ed),
+  ]);
 
-  const unitRows = await getExpenseByUnit(db, ownerId, sd, ed);
-  const units = unitRows.map((r) => ({ unit: r.unit, amount: numOf(r.amount) }));
-  const unitTotal: number = units.reduce((s, r) => s + r.amount, 0);
+  // ---- KPI：从 compose 提取五大指标 ----
+  const catMap: Record<string, number> = {};
+  composeRows.forEach((r) => { catMap[r.name as string] = numOf(r.amount); });
+  const material: number = catMap['材料采购'] || 0;
+  const process: number = catMap['委托加工'] || 0;
+  const misc: number = catMap['杂费支出'] || 0;
+  const tax: number = catMap['缴纳税金'] || 0;
+  const total: number = material + process + misc + tax;
 
-  return { compose, total_expense: totalExpense, trend: trendData, units, unit_total: unitTotal };
+  // ---- 月度趋势：pivot 行 → 按月份合并分类 ----
+  const monthMap: Record<string, { material: number; process: number; misc: number; tax: number }> = {};
+  trendRows.forEach((r) => {
+    const m: string = r.month as string;
+    const t: string = r.type as string;
+    const amt: number = numOf(r.amount);
+    if (!monthMap[m]) monthMap[m] = { material: 0, process: 0, misc: 0, tax: 0 };
+    if (t === '材料采购') monthMap[m].material += amt;
+    else if (t === '委托加工') monthMap[m].process += amt;
+    else if (t === '杂费支出') monthMap[m].misc += amt;
+    else if (t === '缴纳税金') monthMap[m].tax += amt;
+  });
+
+  const trend = Object.entries(monthMap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, cats]) => ({
+      month,
+      material: cats.material,
+      process: cats.process,
+      misc: cats.misc,
+      tax: cats.tax,
+      total: cats.material + cats.process + cats.misc + cats.tax,
+    }));
+
+  // ---- 费用构成（环形图） ----
+  const compose = composeRows.map((r) => ({
+    name: r.name as string,
+    amount: numOf(r.amount),
+    color_key: EXPENSE_COLOR_MAP[r.name as string] || 'gray',
+  }));
+
+  return {
+    kpi: { total, material, process, misc, tax },
+    trend,
+    compose,
+  };
 }
 
 router.get('/analysis/expense', async (req: Request, res: Response) => {
