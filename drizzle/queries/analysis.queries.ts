@@ -373,6 +373,22 @@ export async function getMonthlyExpenseByType(db: DrizzleDb, ownerId: number, sd
     .orderBy(sql`1`, transactions.type);
 }
 
+/** 按月 + 交易类型分组聚合现金收支（PRD v2.1 §8 月度双条） */
+export async function getMonthlyCashFlow(db: DrizzleDb, ownerId: number, sd: string, ed: string) {
+  return db.select({
+    month: sql<string>`TO_CHAR(${transactions.date}::DATE, 'YYYY-MM')`,
+    type: transactions.type,
+    amount: sql<number>`COALESCE(SUM(ABS(${transactions.amount})), 0)`,
+  }).from(transactions)
+    .where(and(
+      eq(transactions.ownerId, ownerId),
+      sql`${transactions.type} IN ('现金收入', '现金支出')`,
+      between(transactions.date, sd, ed)
+    ))
+    .groupBy(sql`TO_CHAR(${transactions.date}::DATE, 'YYYY-MM')`, transactions.type)
+    .orderBy(sql`1`, transactions.type);
+}
+
 // ========== 阿米巴核算 ==========
 
 export async function getUnitAddedValue(db: DrizzleDb, ownerId: number, sd: string, ed: string) {

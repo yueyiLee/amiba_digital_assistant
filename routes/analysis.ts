@@ -9,7 +9,7 @@ import {
   getCustomerAgg, getProductAgg, getStaleInventory, getUnitTop,
   getCustomerAnalysis, getCustomerLastDates,
   getContractAnalysis, getContractPayments,
-  getExpenseCompose, getMonthlyExpenseByType,
+  getExpenseCompose, getMonthlyExpenseByType, getMonthlyCashFlow,
   getUnitAddedValue, getUnitContribs,
   getProductDetailRows,
   getDailyTrend, getIncomeCompose, getExpenseComposeByType,
@@ -18,6 +18,19 @@ import { getInventoryValue } from '../drizzle/queries/inventory.queries.js';
 import { ok, failErr, numOf, daysSince, fmtCny, productAnalysis } from './lib/helpers';
 
 const router: Router = express.Router();
+
+/* ========== 交易类型常量（PRD v2.1 统一口径） ========== */
+const T = {
+  SALES: '销售收入',
+  CASH_IN: '现金收入',
+  OTHER_IN: '其他收入',
+  MATERIAL: '材料采购',
+  PROCESS: '委托加工',
+  MISC: '杂费支出',
+  TAX: '税金',
+  DUTY: '缴纳税金',
+  CASH_OUT: '现金支出',
+} as const;
 
 /* ========== 分析驾驶舱 ========== */
 const COCKPIT_ALERT_RULES = {
@@ -44,16 +57,16 @@ async function cockpitAnalysis(ownerId: number, sd: string, ed: string, unit?: s
   const absAmt: Record<string, number> = {};
   typeRows.forEach((r) => { raw[r.type] = numOf(r.raw); absAmt[r.type] = numOf(r.absAmt); });
 
-  const salesIncome: number = raw['销售收入'] || 0;
-  const cashIncome: number = raw['现金收入'] || 0;
-  const otherIncome: number = raw['其他收入'] || 0;
+  const salesIncome: number = raw[T.SALES] || 0;
+  const cashIncome: number = raw[T.CASH_IN] || 0;
+  const otherIncome: number = raw[T.OTHER_IN] || 0;
   const totalIncome: number = salesIncome + cashIncome + otherIncome;
-  const materialCost: number = absAmt['材料采购'] || 0;
-  const processCost: number = absAmt['委托加工'] || 0;
+  const materialCost: number = absAmt[T.MATERIAL] || 0;
+  const processCost: number = absAmt[T.PROCESS] || 0;
   const consumeCost: number = materialCost + processCost;
-  const miscCost: number = absAmt['杂费支出'] || 0;
-  const cashExpense: number = absAmt['现金支出'] || 0;
-  const taxCost: number = absAmt['税金'] || 0;
+  const miscCost: number = absAmt[T.MISC] || 0;
+  const cashExpense: number = absAmt[T.CASH_OUT] || 0;
+  const taxCost: number = absAmt[T.TAX] || 0;
   const receivable: number = salesIncome - cashIncome;
   const addedValue: number = totalIncome - consumeCost - miscCost;
   const totalExpense: number = materialCost + processCost + miscCost + taxCost;
@@ -161,14 +174,14 @@ async function overviewAnalysis(ownerId: number, sd: string, ed: string, unit?: 
   const absAmt: Record<string, number> = {};
   typeRows.forEach((r) => { raw[r.type] = numOf(r.raw); absAmt[r.type] = numOf(r.absAmt); });
 
-  const salesIncome: number = raw['销售收入'] || 0;
-  const cashIncome: number = raw['现金收入'] || 0;
-  const otherIncome: number = raw['其他收入'] || 0;
+  const salesIncome: number = raw[T.SALES] || 0;
+  const cashIncome: number = raw[T.CASH_IN] || 0;
+  const otherIncome: number = raw[T.OTHER_IN] || 0;
   const totalIncome: number = salesIncome + cashIncome + otherIncome;
-  const materialCost: number = absAmt['材料采购'] || 0;
-  const processCost: number = absAmt['委托加工'] || 0;
+  const materialCost: number = absAmt[T.MATERIAL] || 0;
+  const processCost: number = absAmt[T.PROCESS] || 0;
   const consumeCost: number = materialCost + processCost;
-  const miscCost: number = absAmt['杂费支出'] || 0;
+  const miscCost: number = absAmt[T.MISC] || 0;
   const taxCost: number = absAmt['税金'] || 0;
   const receivable: number = salesIncome - cashIncome;
   const addedValue: number = totalIncome - consumeCost - miscCost;
@@ -190,7 +203,7 @@ async function overviewAnalysis(ownerId: number, sd: string, ed: string, unit?: 
   });
 
   const staleRows = await getStaleInventory(db, ownerId);
-  const cashExpense: number = absAmt['现金支出'] || 0;
+  const cashExpense: number = absAmt[T.CASH_OUT] || 0;
   const netCashFlow: number = cashIncome - cashExpense;
 
   const alerts: OverviewAlert[] = [];
@@ -535,10 +548,10 @@ router.get('/analysis/contract', async (req: Request, res: Response) => {
 
 /** 分类名 → 前端色键映射 */
 const EXPENSE_COLOR_MAP: Record<string, string> = {
-  '材料采购': 'blue',
-  '委托加工': 'orange',
-  '杂费支出': 'purple',
-  '缴纳税金': 'red',
+  [T.MATERIAL]: 'blue',
+  [T.PROCESS]: 'orange',
+  [T.MISC]: 'purple',
+  [T.DUTY]: 'red',
 };
 
 async function expenseAnalysis(ownerId: number, sd: string, ed: string) {
@@ -553,10 +566,10 @@ async function expenseAnalysis(ownerId: number, sd: string, ed: string) {
   // ---- KPI：从 compose 提取五大指标 ----
   const catMap: Record<string, number> = {};
   composeRows.forEach((r) => { catMap[r.name as string] = numOf(r.amount); });
-  const material: number = catMap['材料采购'] || 0;
-  const process: number = catMap['委托加工'] || 0;
-  const misc: number = catMap['杂费支出'] || 0;
-  const tax: number = catMap['缴纳税金'] || 0;
+  const material: number = catMap[T.MATERIAL] || 0;
+  const process: number = catMap[T.PROCESS] || 0;
+  const misc: number = catMap[T.MISC] || 0;
+  const tax: number = catMap[T.DUTY] || 0;
   const total: number = material + process + misc + tax;
 
   // ---- 月度趋势：pivot 行 → 按月份合并分类 ----
@@ -566,10 +579,10 @@ async function expenseAnalysis(ownerId: number, sd: string, ed: string) {
     const t: string = r.type as string;
     const amt: number = numOf(r.amount);
     if (!monthMap[m]) monthMap[m] = { material: 0, process: 0, misc: 0, tax: 0 };
-    if (t === '材料采购') monthMap[m].material += amt;
-    else if (t === '委托加工') monthMap[m].process += amt;
-    else if (t === '杂费支出') monthMap[m].misc += amt;
-    else if (t === '缴纳税金') monthMap[m].tax += amt;
+    if (t === T.MATERIAL) monthMap[m].material += amt;
+    else if (t === T.PROCESS) monthMap[m].process += amt;
+    else if (t === T.MISC) monthMap[m].misc += amt;
+    else if (t === T.DUTY) monthMap[m].tax += amt;
   });
 
   const trend = Object.entries(monthMap)
@@ -605,6 +618,93 @@ router.get('/analysis/expense', async (req: Request, res: Response) => {
   } catch (e: unknown) { failErr(res, e); }
 });
 
+/* ========== 资金分析（PRD v2.1 §8） ========== */
+
+async function cashAnalysis(ownerId: number, sd: string, ed: string) {
+  const db = getDb();
+
+  // 并行获取类型聚合 + 月度现金流行 + 客户分析
+  const [typeRows, cashFlowRows, custAgg] = await Promise.all([
+    getTypeAggregation(db, ownerId, sd, ed, null /* 不过滤单元 */),
+    getMonthlyCashFlow(db, ownerId, sd, ed),
+    getCustomerAnalysis(db, ownerId, sd, ed),
+  ]);
+
+  // ---- KPI ----
+  const raw: Record<string, number> = {};
+  const absAmt: Record<string, number> = {};
+  typeRows.forEach((r) => { raw[r.type] = numOf(r.raw); absAmt[r.type] = numOf(r.absAmt); });
+  const cashIn: number = raw[T.CASH_IN] || 0;
+  const cashOut: number = absAmt[T.CASH_OUT] || 0;
+  const netCash: number = cashIn - cashOut;
+  const receivable: number = Math.max(0, (raw[T.SALES] || 0) - cashIn);
+
+  // ---- 月度趋势：pivot 行为 { month, in, out, net } ----
+  const monthMap: Record<string, { in: number; out: number }> = {};
+  cashFlowRows.forEach((r) => {
+    const m: string = r.month as string;
+    const t: string = r.type as string;
+    const amt: number = numOf(r.amount);
+    if (!monthMap[m]) monthMap[m] = { in: 0, out: 0 };
+    if (t === T.CASH_IN) monthMap[m].in += amt;
+    else if (t === T.CASH_OUT) monthMap[m].out += amt;
+  });
+  const trend = Object.entries(monthMap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, vals]) => ({
+      month,
+      in: vals.in,
+      out: vals.out,
+      net: vals.in - vals.out,
+    }));
+
+  // ---- 客户账龄（PRD §8.1） ----
+  const lastDateMap: Record<number, string> = {};
+  if (custAgg.custAgg.length > 0) {
+    const cids: number[] = custAgg.custAgg.map((r) => r.customerId as number);
+    const dates = await getCustomerLastDates(db, ownerId, cids);
+    dates.forEach((r) => { lastDateMap[r.customerId as number] = r.lastDate as string; });
+  }
+
+  const aging = custAgg.custAgg
+    .map((r) => {
+      const sale: number = numOf(r.sale);
+      const cash: number = numOf(r.cash);
+      const recv: number = sale - cash;
+      const lastDate: string = lastDateMap[r.customerId as number] || '';
+      const days: number = daysSince(lastDate);
+      let bucket: string;
+      if (days > 60) bucket = 'overdue';
+      else if (days > 30) bucket = 'watch';
+      else bucket = 'normal';
+      return { customer_id: r.customerId as number, name: (r.customerName as string) || '—', days, amount: recv, bucket };
+    })
+    .filter(a => a.amount > 0)
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 10);
+
+  // ---- 挂账空态引导 ----
+  const showReceivableGuide: boolean = cashIn === 0 && cashOut === 0 && receivable > 0;
+
+  // pending_receivable 与 kpi.receivable 等价（两者均表示累计应收款），
+  // 仅当前端空态引导文案需要独立字段时保留此冗余。
+  return {
+    kpi: { cash_in: cashIn, cash_out: cashOut, net_cash: netCash, receivable },
+    trend,
+    aging,
+    show_receivable_guide: showReceivableGuide,
+    pending_receivable: receivable,
+  };
+}
+
+router.get('/analysis/cash', async (req: Request, res: Response) => {
+  try {
+    const { startDate, endDate } = req.query as Record<string, string | undefined>;
+    const sd: string = startDate || '0001-01-01', ed: string = endDate || '9999-12-31';
+    ok(res, await cashAnalysis(req.user!.id, sd, ed));
+  } catch (e: unknown) { failErr(res, e); }
+});
+
 /* ========== 阿米巴核算 ========== */
 async function amoebaAnalysis(ownerId: number, sd: string, ed: string) {
   const db = getDb();
@@ -613,14 +713,14 @@ async function amoebaAnalysis(ownerId: number, sd: string, ed: string) {
   const absAmt: Record<string, number> = {};
   typeRows.forEach((r) => { raw[r.type] = numOf(r.raw); absAmt[r.type] = numOf(r.absAmt); });
 
-  const salesIncome: number = raw['销售收入'] || 0;
-  const cashIncome: number = raw['现金收入'] || 0;
-  const otherIncome: number = raw['其他收入'] || 0;
+  const salesIncome: number = raw[T.SALES] || 0;
+  const cashIncome: number = raw[T.CASH_IN] || 0;
+  const otherIncome: number = raw[T.OTHER_IN] || 0;
   const totalIncome: number = salesIncome + cashIncome + otherIncome;
-  const materialCost: number = absAmt['材料采购'] || 0;
-  const processCost: number = absAmt['委托加工'] || 0;
+  const materialCost: number = absAmt[T.MATERIAL] || 0;
+  const processCost: number = absAmt[T.PROCESS] || 0;
   const consumeCost: number = materialCost + processCost;
-  const miscCost: number = absAmt['杂费支出'] || 0;
+  const miscCost: number = absAmt[T.MISC] || 0;
   const addedValue: number = totalIncome - consumeCost - miscCost;
 
   const smk: string = String(sd).slice(0, 7), emk: string = String(ed).slice(0, 7);
@@ -644,7 +744,7 @@ async function amoebaAnalysis(ownerId: number, sd: string, ed: string) {
     const pRaw: Record<string, number> = {};
     const pAbs: Record<string, number> = {};
     prevTypeRows.forEach((r) => { pRaw[r.type] = numOf(r.raw); pAbs[r.type] = numOf(r.absAmt); });
-    const pAdded: number = (pRaw['销售收入'] || 0) + (pRaw['现金收入'] || 0) + (pRaw['其他收入'] || 0) - ((pAbs['材料采购'] || 0) + (pAbs['委托加工'] || 0)) - (pAbs['杂费支出'] || 0);
+    const pAdded: number = (pRaw[T.SALES] || 0) + (pRaw[T.CASH_IN] || 0) + (pRaw[T.OTHER_IN] || 0) - ((pAbs[T.MATERIAL] || 0) + (pAbs[T.PROCESS] || 0)) - (pAbs[T.MISC] || 0);
 
     const pSmk: string = String(prevSdStr).slice(0, 7), pEmk: string = String(prevEdStr).slice(0, 7);
     const prevSalRow = await getSalaryHoursAgg(db, ownerId, pSmk, pEmk);
