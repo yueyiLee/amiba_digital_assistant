@@ -459,6 +459,58 @@ export async function getProductGmByPids(db: DrizzleDb, ownerId: number, pids: n
     .groupBy(transactions.productId);
 }
 
+// ========== 商品明细聚合（PRD v2.1 §5） ==========
+
+/**
+ * 获取全量商品明细——按商品聚合销售额/采购成本/销售数量/采购数量。
+ * 使用子查询分别聚合 transaction 金额与 contract_items 数量，避免双重 JOIN 笛卡尔积。
+ */
+export async function getProductDetailRows(db: DrizzleDb, ownerId: number, sd: string, ed: string) {
+  // ---- 子查询 A：按商品聚合交易金额 ----
+  const amtSQ = db.select({
+    productId: transactions.productId,
+    saleAmt: sql<number>`COALESCE(SUM(CASE WHEN ${transactions.type}='销售收入' THEN ${transactions.amount} ELSE 0 END), 0)`.as('sale_amt'),
+    costAmt: sql<number>`COALESCE(SUM(CASE WHEN ${transactions.type}='材料采购' THEN ABS(${transactions.amount}) ELSE 0 END), 0)`.as('cost_amt'),
+  }).from(transactions)
+    .where(and(
+      eq(transactions.ownerId, ownerId),
+      between(transactions.date, sd, ed),
+      sql`${transactions.productId} IS NOT NULL`,
+    ))
+    .groupBy(transactions.productId).as('amt_sub');
+
+  // ---- 子查询 B：按商品聚合合同明细数量 ----
+  const qtySQ = db.select({
+    productId: contractItems.productId,
+    saleQty: sql<number>`COALESCE(SUM(CASE WHEN ${contracts.direction}='sale' THEN ${contractItems.quantity} ELSE 0 END), 0)`.as('sale_qty'),
+    purQty: sql<number>`COALESCE(SUM(CASE WHEN ${contracts.direction}='purchase' THEN ${contractItems.quantity} ELSE 0 END), 0)`.as('purchase_qty'),
+  }).from(contractItems)
+    .innerJoin(contracts, eq(contractItems.contractId, contracts.id))
+    .where(and(
+      eq(contractItems.ownerId, ownerId),
+      between(contracts.date, sd, ed),
+      sql`${contractItems.productId} IS NOT NULL`,
+    ))
+    .groupBy(contractItems.productId).as('qty_sub');
+
+  return db.select({
+    product_id: products.id,
+    name: products.name,
+    sale_amt: sql<number>`COALESCE(${amtSQ.saleAmt}, 0)`,
+    cost_amt: sql<number>`COALESCE(${amtSQ.costAmt}, 0)`,
+    sale_qty: sql<number>`COALESCE(${qtySQ.saleQty}, 0)`,
+    purchase_qty: sql<number>`COALESCE(${qtySQ.purQty}, 0)`,
+  }).from(products)
+    .leftJoin(amtSQ, eq(products.id, amtSQ.productId))
+    .leftJoin(qtySQ, eq(products.id, qtySQ.productId))
+    .where(and(
+      eq(products.ownerId, ownerId),
+      // 至少有一笔金额或数量记录
+      sql`(COALESCE(${amtSQ.saleAmt}, 0) > 0 OR COALESCE(${amtSQ.costAmt}, 0) > 0 OR COALESCE(${qtySQ.saleQty}, 0) > 0 OR COALESCE(${qtySQ.purQty}, 0) > 0)`,
+    ))
+    .orderBy(sql`COALESCE(${amtSQ.saleAmt}, 0) DESC`);
+}
+
 // ========== 通用计数查询 ==========
 
 export async function countCustomers(db: DrizzleDb, ownerId: number): Promise<number> {

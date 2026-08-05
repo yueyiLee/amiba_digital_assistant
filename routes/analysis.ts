@@ -9,16 +9,10 @@ import {
   getTypeAggregation, getSalaryHoursAgg,
   getCustomerAgg, getProductAgg, getStaleInventory, getUnitTop,
   getCustomerAnalysis, getCustomerLastDates,
-  getProductSaleAgg, getProductPurchaseAgg,
-  getContractItemAgg, getPriceTrend,
   getContractAnalysis, getContractPayments,
   getExpenseCompose, getMonthlyExpense, getExpenseByUnit,
   getUnitAddedValue, getUnitContribs,
-  getProductSkuCount, getProductTop10,
-  getStockByProductIds, getAvgCostByProductIds,
-  getAllProductsWithStock, getProductGmByPids,
-  countCustomers, getTotalSaleAmount,
-  buildTxFilter,
+  getProductDetailRows,
   getDailyTrend, getIncomeCompose, getExpenseComposeByType,
 } from '../drizzle/queries/analysis.queries.js';
 import { getInventoryValue } from '../drizzle/queries/inventory.queries.js';
@@ -389,83 +383,82 @@ router.get('/analysis/customer', async (req: Request, res: Response) => {
   } catch (e: unknown) { failErr(res, e); }
 });
 
-/* ========== 商品分析（小程序） ========== */
+/* ========== 商品分析（小程序 — PRD v2.1 §5） ========== */
+
+/** 将 productAnalysis() 返回字段映射为前端 IProductRankItem */
+function mapRank(items: { product_id: number | null; product_name: string | null; total_qty?: number; total_amount?: number; qty?: number; amount?: number }[]): { product_id: number | null; product_name: string | null; qty: number; amount: number }[] {
+  return items.map(r => ({
+    product_id: r.product_id,
+    product_name: r.product_name,
+    qty: r.total_qty ?? r.qty ?? 0,
+    amount: r.total_amount ?? r.amount ?? 0,
+  }));
+}
+
+/** 将 productAnalysis() 返回的 price_change 映射为前端 IProductPriceChange */
+function mapPriceChange(items: { product_name?: string; change?: number; min?: number; max?: number; samples?: number }[]): { product_id: number | null; product_name: string | null; min_price: number; max_price: number; change_rate: number; sample_count: number }[] {
+  return items.map(r => ({
+    product_id: null, // 价格变动榜无 product_id（来自多笔成交聚合）
+    product_name: r.product_name ?? null,
+    min_price: r.min ?? 0,
+    max_price: r.max ?? 0,
+    change_rate: r.change ?? 0,
+    sample_count: r.samples ?? 0,
+  }));
+}
+
 async function productMiniAnalysis(ownerId: number, sd: string, ed: string) {
   const db = getDb();
-  const salesData = await productAnalysis(ownerId, 'sale', sd, ed);
 
-  const skuCount = await getProductSkuCount(db, ownerId);
-  const inventoryValue: number = await getInventoryValue(db, ownerId);
+  // 并行获取收入/支出双视角数据 + 商品明细
+  const [salesRaw, purchaseRaw, detailRows] = await Promise.all([
+    productAnalysis(ownerId, 'sale', sd, ed),
+    productAnalysis(ownerId, 'purchase', sd, ed),
+    getProductDetailRows(db, ownerId, sd, ed),
+  ]);
 
-  const topRows = await getProductTop10(db, ownerId, sd, ed);
-
-  const pids: number[] = topRows.map((r) => r.productId as number);
-  const stockMap: Record<number, number> = {};
-  if (pids.length > 0) {
-    const stockRows = await getStockByProductIds(db, ownerId, pids);
-    stockRows.forEach((r) => { stockMap[r.productId as number] = Number(r.qty) || 0; });
-  }
-
-  const costAvgMap: Record<number, number> = {};
-  if (pids.length > 0) {
-    const avgRows = await getAvgCostByProductIds(db, ownerId, pids);
-    avgRows.forEach((r) => { costAvgMap[r.productId as number] = Number(r.avgCost) || 0; });
-  }
-
-  const topProducts = topRows.map((r) => {
-    const sale: number = numOf(r.sale);
-    const cost: number = numOf(r.cost);
-    const gm: number = sale > 0 ? (sale - cost) / sale : 0;
-    const stock: number = stockMap[r.productId as number] || 0;
-    const daysDiff: number = Math.max(1, Math.ceil((new Date(ed).getTime() - new Date(sd).getTime()) / 86400000));
-    const dailySale: number = sale / daysDiff;
-    const turnoverDays: number = dailySale > 0 ? Math.round(stock / dailySale) : 0;
-    return { product_id: r.productId, product_name: r.productName, sale, gm, stock, turnover_days: turnoverDays };
-  });
-
-  const ALL_PRODUCTS = await getAllProductsWithStock(db, ownerId);
-
-  const gmMap: Record<number, number> = {};
-  topProducts.forEach((p) => { gmMap[p.product_id as number] = p.gm; });
-
-  if (ALL_PRODUCTS.length > 0) {
-    const allPids: number[] = ALL_PRODUCTS.map((p) => p.id);
-    const gmRows = await getProductGmByPids(db, ownerId, allPids, sd, ed);
-    gmRows.forEach((r) => {
-      if (!gmMap[r.productId as number]) {
-        const s: number = numOf(r.sale), c: number = numOf(r.cost);
-        gmMap[r.productId as number] = s > 0 ? (s - c) / s : 0;
-      }
-    });
-  }
-
-  const MARGIN_THRESHOLD = 0.15;
-  const alerts: Record<string, unknown>[] = [];
-
-  ALL_PRODUCTS.forEach((p) => {
-    const gm = gmMap[p.id];
-    if (gm !== undefined && gm < MARGIN_THRESHOLD) {
-      alerts.push({ level: 'red', product_name: p.name, product_id: p.id, reason: `毛利率 ${(gm * 100).toFixed(1)}% 跌破 ${(MARGIN_THRESHOLD * 100).toFixed(0)}%`, type: 'low_margin' });
-    }
-    if (p.warningThreshold as number > 0 && (p.stock as number) <= (p.warningThreshold as number)) {
-      alerts.push({ level: 'red', product_name: p.name, product_id: p.id, reason: `库存 ${p.stock} ≤ 安全线 ${p.warningThreshold}，建议补货`, type: 'low_stock' });
-    }
-  });
-
-  topProducts.forEach((p) => {
-    if (p.turnover_days > 90) {
-      alerts.push({ level: 'yellow', product_name: p.product_name, product_id: p.product_id, reason: `周转 ${p.turnover_days} 天，库存呆滞风险`, type: 'slow_turnover' });
-    }
-  });
-
-  alerts.sort((a, b) => (a.level === b.level ? 0 : a.level === 'red' ? -1 : 1));
-
-  return {
-    kpi: { sku_count: skuCount, inventory_value: inventoryValue, avg_gm: salesData.avg_gm },
-    top_products: topProducts,
-    alerts,
-    alert_count: { red: alerts.filter((a) => a.level === 'red').length, yellow: alerts.filter((a) => a.level === 'yellow').length },
+  // ---- 收入类（销售） ----
+  const sales = {
+    kpi: {
+      total_qty: salesRaw.total_qty,
+      total_sale: salesRaw.total_sale,
+      avg_gm: salesRaw.avg_gm,
+    },
+    by_qty: mapRank(salesRaw.by_qty.map(r => ({ product_id: r.product_id, product_name: r.product_name, total_qty: r.total_qty, total_amount: r.total_amount }))),
+    by_amount: mapRank(salesRaw.by_amount.map(r => ({ product_id: r.product_id, product_name: r.product_name, amount: r.total_amount }))),
+    price_change: mapPriceChange(salesRaw.price_change as any[]),
   };
+
+  // ---- 支出类（采购） ----
+  const purchase = {
+    kpi: {
+      total_qty: purchaseRaw.total_qty,
+      total_cost: purchaseRaw.total_cost,
+    },
+    by_qty: mapRank(purchaseRaw.by_qty.map(r => ({ product_id: r.product_id, product_name: r.product_name, total_qty: r.total_qty, total_amount: r.total_amount }))),
+    by_amount: mapRank(purchaseRaw.by_amount.map(r => ({ product_id: r.product_id, product_name: r.product_name, amount: r.total_amount }))),
+    price_change: mapPriceChange(purchaseRaw.price_change as any[]),
+  };
+
+  // ---- 商品明细（跨 Tab 固定） ----
+  const detail = detailRows.map(r => {
+    const sa: number = numOf(r.sale_amt);
+    const ca: number = numOf(r.cost_amt);
+    const sq: number = numOf(r.sale_qty);
+    const pq: number = numOf(r.purchase_qty);
+    const gm: number = sa > 0 ? (sa - ca) / sa : 0;
+    return {
+      product_id: r.product_id,
+      name: r.name ?? '',
+      sale_amt: sa,
+      cost_amt: ca,
+      sale_qty: sq,
+      purchase_qty: pq,
+      gm,
+    };
+  }).filter(d => d.sale_amt > 0 || d.cost_amt > 0);
+
+  return { sales, purchase, detail };
 }
 
 router.get('/analysis/product', async (req: Request, res: Response) => {
