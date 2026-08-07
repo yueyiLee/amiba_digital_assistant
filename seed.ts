@@ -35,7 +35,6 @@ export const DEFAULT_CATEGORIES: [string, string][] = [
 
 // 支出项细分预设
 export const DEFAULT_EXPENSE_ITEMS: [string, string][] = [
-  ['processing', '染色费'], ['processing', '制造费用'], ['processing', '后整理费'],
   ['misc', '培训费'], ['misc', '差旅费'], ['misc', '水电费'], ['misc', '维修费用'],
   ['misc', '产品运营费用'], ['misc', '车辆费用'], ['misc', '库存利息'], ['misc', '其他管理杂费'],
   ['misc', '医保社保保费'], ['misc', '门店租金'], ['misc', '物业费'],
