@@ -19,8 +19,10 @@ export function listInventory(db: DrizzleDb, ownerId: number) {
     productName: products.name,
     category1: products.category1,
     category2: products.category2,
+    unit: products.unit,
     purchasePrice: products.purchasePrice,
     salePrice: products.salePrice,
+    warningThreshold: products.warningThreshold,
   }).from(inventory)
     .innerJoin(products, eq(inventory.productId, products.id))
     .where(eq(inventory.ownerId, ownerId))
