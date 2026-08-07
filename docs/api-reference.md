@@ -1995,7 +1995,7 @@
 | `kpi.total_amount` | 本期签约合同总额 |
 | `kpi.execution_rate` | 执行率 = 已回款 / 合同金额（0-1 小数） |
 | `kpi.unpaid_amount` | 未回款金额 = max(0, 合同总额 − 已回款) |
-| `kpi.status_summary` | 按状态汇总：`in_progress`（进行中）/ `completed`（已完结）/ `dunning`（催收中），各含 count 与 amount |
+| `kpi.status_summary` | 按状态汇总：`in_progress`（进行中）/ `completed`（已完成）/ `cancelled`（已取消），各含 count 与 amount |
 | `contracts` | 合同执行列表，按 id 降序；每行含客户、金额、已回款（`paid`，限定在所选日期范围）、未回款（`unpaid`）、状态、账龄（`age_days`，天） |
 
 > 回款统计与 KPI 保持一致，均限定在所选日期范围内；账龄按最近一次回款日期（无回款则为合同签订日）距今计算。
